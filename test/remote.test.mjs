@@ -37,6 +37,7 @@ const { generateDailyWorklog, getWorklog } = await import('../build/worklog/gene
 const { setWorklogLLM } = await import('../build/worklog/llm.js');
 const { createHttpServer } = await import('../build/remote/server.js');
 const { threadKeyOf } = await import('../build/sync/store.js');
+const { createTask, updateTask, listTasks, getTask, findActionableEmails, buildDailyBrief, getReplyContext } = await import('../build/tasks/service.js');
 
 const CRLF = '\r\n';
 // 실제 메일 클라이언트처럼 제목은 RFC 2047 로 인코딩한다 (raw 8bit 헤더는 파서마다 처리가 다르다)
@@ -265,6 +266,85 @@ test('worklog: fake LLM evidence validation, rules mode, markdown/json, persiste
   assert.match(empty.markdown, /기록할 업무 활동이 없습니다/);
 });
 
+test('tasks: actionable emails, create/update/list, brief, reply context', async () => {
+  const cands = await findActionableEmails(db, { since: '2025-09-01', before: '2025-09-30' });
+  const subjects = cands.map((c) => c.subject);
+  assert.ok(subjects.includes('[긴급] 계약서 검토 요청'), JSON.stringify(subjects));
+  assert.ok(!subjects.includes('회의 일정 조율'), '답장한 스레드는 제외');
+  assert.ok(!subjects.includes('Weekly Newsletter'), '자동 발신은 제외');
+  const urgent = cands.find((c) => c.subject === '[긴급] 계약서 검토 요청');
+  assert.ok(urgent.reasons.includes('긴급 표현'));
+  assert.equal(urgent.repliedAfter, false);
+  assert.deepEqual(urgent.linkedTaskIds, []);
+
+  // 근거 메일로 등록 → 요청자/사업/스레드 자동
+  const t1 = await createTask(db, { title: '계약서 검토 의견 회신', sourceEmailId: urgent.id, dueDate: '2025-09-10', priority: 'high', meta: { dueSource: '테스트' } });
+  assert.equal(t1.requesterEmail, 'park@client.com');
+  assert.equal(t1.projectName, 'B사업');
+  assert.equal(t1.threadKey, '[긴급] 계약서 검토 요청');
+  assert.equal(t1.overdue, true, '2025-09-10 은 지났다');
+  assert.ok(t1.daysLeft < 0);
+  await assert.rejects(() => createTask(db, { title: 'x', dueDate: '9/5' }), /YYYY-MM-DD/);
+  await assert.rejects(() => createTask(db, { title: 'x', sourceEmailId: 999999 }), /근거 메일/);
+
+  // 등록된 메일은 후보에서 빠지고, includeLinked 면 연결 id 가 보인다
+  const after = await findActionableEmails(db, { since: '2025-09-01', before: '2025-09-30' });
+  assert.ok(!after.find((c) => c.id === urgent.id));
+  const withLinked = await findActionableEmails(db, { since: '2025-09-01', before: '2025-09-30', includeLinked: true });
+  assert.deepEqual(withLinked.find((c) => c.id === urgent.id).linkedTaskIds, [t1.id]);
+
+  const t2 = await createTask(db, { title: '월간 보고서 작성', projectName: 'A사업', dueDate: '2099-12-31' });
+  const t3 = await createTask(db, { title: '마감 없는 일', priority: 'low' });
+  const open = await listTasks(db);
+  assert.equal(open.total, 3);
+  assert.equal(open.tasks[0].id, t1.id, '마감 임박(지연) 먼저');
+  assert.equal(open.tasks[2].id, t3.id, '마감 없는 것은 마지막');
+  assert.equal(open.tasks[0].sourceEmail.subject, '[긴급] 계약서 검토 요청');
+  const overdue = await listTasks(db, { overdueOnly: true });
+  assert.equal(overdue.total, 1);
+  const byProject = await listTasks(db, { project: 'A사업' });
+  assert.equal(byProject.tasks[0].id, t2.id);
+  const byQuery = await listTasks(db, { query: '보고서' });
+  assert.equal(byQuery.total, 1);
+
+  const upd = await updateTask(db, t1.id, { status: 'doing', appendNote: '초안 작성 시작' });
+  assert.equal(upd.status, 'doing');
+  assert.match(upd.notes, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] 초안 작성 시작/);
+  const done = await updateTask(db, t1.id, { status: 'done' });
+  assert.ok(done.completedAt);
+  assert.equal(done.overdue, false);
+  assert.equal((await listTasks(db)).total, 2);
+  assert.equal((await listTasks(db, { status: ['done'] })).total, 1);
+  assert.equal(await updateTask(db, 999999, { status: 'done' }), null);
+  // 완료된 할 일은 스레드 연결로 치지 않으므로 후보에 다시 나타난다 (source_email_id 직접 연결은 유지)
+  const reopened = await findActionableEmails(db, { since: '2025-09-01', before: '2025-09-30', includeLinked: true });
+  assert.deepEqual(reopened.find((c) => c.id === urgent.id).linkedTaskIds, [t1.id]);
+
+  const detail = await getTask(db, t1.id);
+  assert.equal(detail.sourceEmail.id, urgent.id);
+  assert.ok(detail.thread.length >= 1);
+  assert.equal(await getTask(db, 999999), null);
+
+  const brief = await buildDailyBrief(db, { date: '2025-09-05', lookbackDays: 2 });
+  assert.equal(brief.date, '2025-09-05');
+  assert.equal(brief.counts.dueSoon, 0);
+  assert.equal(brief.counts.todo, 2);
+  assert.ok(brief.recentlyCompleted.find((t) => t.id === t1.id));
+  assert.ok(Array.isArray(brief.newActionableEmails));
+  assert.equal(brief.sync[0].source, 'pop3');
+  const todayBrief = await buildDailyBrief(db);
+  assert.equal(todayBrief.counts.overdue, 0, 't1 완료, t2 는 2099');
+
+  const ctx = await getReplyContext(db, { taskId: t1.id });
+  assert.equal(ctx.email.id, urgent.id);
+  assert.equal(ctx.suggestedSubject, 'Re: [긴급] 계약서 검토 요청');
+  assert.deepEqual(ctx.replyTo, ['park@client.com']);
+  assert.equal(ctx.myRecentMailsToSender.length, 1, 's3 계약서 검토 의견');
+  assert.equal(ctx.task.id, t1.id);
+  await assert.rejects(() => getReplyContext(db, { taskId: t3.id }), /emailId/);
+  assert.equal(await getReplyContext(db, { emailId: 999999 }), null);
+});
+
 test('http server: health, auth, MCP tools over Streamable HTTP, path token, /import', async () => {
   const server = createHttpServer();
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
@@ -283,7 +363,7 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
     const client = new Client({ name: 'test', version: '0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } } }));
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    for (const name of ['sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
+    for (const name of ['find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
       assert.ok(tools.includes(name), `tool ${name}`);
     }
     const call = async (name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
@@ -313,6 +393,14 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
     const fetched = await call('fetch', { id: chat.results[0].id });
     assert.equal(fetched.id, chat.results[0].id);
     assert.match(fetched.text, /From: /);
+    const brief = await call('daily_brief', {});
+    assert.equal(brief.success, true);
+    assert.ok(brief.counts.todo >= 1);
+    const created = await call('create_task', { title: 'MCP 로 만든 할 일', sourceEmailId: s.emails[0].id });
+    assert.equal(created.success, true);
+    assert.equal(created.task.sourceEmailId, s.emails[0].id);
+    const listed = await call('list_tasks', { query: 'MCP 로' });
+    assert.equal(listed.total, 1);
     const sync = await call('sync_emails', { sources: ['pop3'] });
     assert.equal(sync.acquired, true);
     const imp = await call('import_emails', { contentBase64: Buffer.from(eml({ id: 'tool-import@self', from: `Me <${SELF}>`, to: 'a@b.com', subject: '도구로 가져온 메일', date: 'Fri, 05 Sep 2025 10:00:00 +0900', text: 'x' })).toString('base64'), direction: 'sent' });

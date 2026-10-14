@@ -30,6 +30,10 @@
 | 23 | Railway 배포 (railway.*.json, 자동 배포, 변수, HTTPS) | ⚠️ 미검증 | 계정·네트워크 없음. `docs/DEPLOY_RAILWAY.md` |
 | 24 | Claude Code / ChatGPT 실제 앱 연결 | ⚠️ 미검증 | 프로토콜 수준(SDK 클라이언트)만 검증. `docs/CONNECT_CLIENTS.md` |
 | 25 | 로컬 stdio MCP (9개 도구) | ✅ 검증 | `test/e2e.mjs` 39건 |
+| 26 | 업무관리: tasks 테이블, create/update/list/get, 지연·마감 계산, 메모 덧붙이기 | ✅ 검증 | 실제 PostgreSQL 통합 테스트 (마이그레이션 0001) |
+| 27 | 할 일 후보 메일 (요청 표현, 미등록, 미회신, 자동 발신 제외) | ✅ 검증 | 답장한 스레드·뉴스레터 제외, 등록 후 후보에서 제외, includeLinked 시 연결 id 표시 |
+| 28 | daily_brief, get_reply_context | ✅ 검증 | 구조·수치 확인. MCP 경유 daily_brief/create_task/list_tasks 호출 |
+| 29 | work-manager 스킬로 Claude Code 에서 실제 운용 | ⚠️ 미검증 | 배포 서버 없음. 지침 문서만 제공 |
 
 ## 테스트 실행
 ```bash

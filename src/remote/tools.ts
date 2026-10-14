@@ -14,6 +14,7 @@ import { generateDailyWorklog, getWorklog } from '../worklog/generate.js';
 import { hasAnthropicCredentials } from '../worklog/llm.js';
 import { errorResult, jsonResult } from '../tools/common.js';
 import { formatKST } from '../utils/date.js';
+import { registerTaskTools } from './tools-tasks.js';
 
 const dateShape = {
   since: z.string().describe('시작일 (포함). YYYY-MM-DD (KST) 또는 ISO 8601'),
@@ -46,6 +47,7 @@ function daysAgoKST(days: number): string {
 export function buildMcpServer(): McpServer {
   const server = new McpServer({ name: `${PACKAGE_NAME}-remote`, version: PACKAGE_VERSION });
   const db = getDb();
+  registerTaskTools(server, db);
 
   server.registerTool(
     'sync_emails',

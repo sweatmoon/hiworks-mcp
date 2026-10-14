@@ -44,7 +44,16 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 | `search` / `fetch` | ChatGPT 커넥터 규약용 |
 | `ping` | 연결 확인 |
 
-원격 서버는 **읽기 전용** 입니다. 메일 삭제·발송 도구는 없습니다.
+**업무관리 (에이전트용)** — 자세한 사용법은 [docs/AGENT.md](docs/AGENT.md), 에이전트 지침은 [.claude/skills/work-manager/SKILL.md](.claude/skills/work-manager/SKILL.md)
+
+| 도구 | 설명 |
+|---|---|
+| `daily_brief` | 지연·오늘 마감·임박·진행 중·새 요청 메일·최근 완료·동기화 상태 (브리핑 원자료) |
+| `find_actionable_emails` | 요청·기한 표현이 있고 미등록·미회신인 수신 메일 후보 (규칙 기반, 판단은 Claude) |
+| `create_task` / `update_task` / `list_tasks` / `get_task` | 할 일 등록(근거 메일 연결)·상태/마감/메모 갱신·조회·상세 |
+| `get_reply_context` | 답장 초안용 맥락 (원문, 스레드, 같은 상대에게 보낸 최근 메일). 발송은 하지 않음 |
+
+원격 서버는 메일에 대해 **읽기 전용** 입니다(쓰기는 할 일 테이블만). 메일 삭제·발송 도구는 없습니다.
 
 ## 빠른 시작 (원격)
 
@@ -94,6 +103,8 @@ src/worker/main.ts      Mail Worker
 src/sync/               POP3 증분 동기화, 가져오기, 잠금, 상태, (미검증) 웹메일 수집기
 src/search/ src/stats/  검색, 통계
 src/worklog/            AI 업무일지 (Anthropic SDK, 근거 검증)
+src/tasks/              업무관리 (할 일, 브리핑, 후보 메일, 답장 맥락)
+.claude/skills/         work-manager 에이전트 스킬
 src/db/ drizzle/        Drizzle 스키마, 마이그레이션
 docs/                   계획, 검증 결과, 배포, 연결, 보낸메일 가이드
 ```

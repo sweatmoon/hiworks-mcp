@@ -177,3 +177,42 @@ export type EmailRow = typeof emails.$inferSelect;
 export type NewEmailRow = typeof emails.$inferInsert;
 export type WorkActivityRow = typeof workActivities.$inferSelect;
 export type DailyWorklogRow = typeof dailyWorklogs.$inferSelect;
+
+// ---- 업무관리 (tasks) ----
+export const taskStatusEnum = pgEnum('task_status', ['todo', 'doing', 'waiting', 'done', 'cancelled']);
+export const taskPriorityEnum = pgEnum('task_priority', ['low', 'normal', 'high', 'urgent']);
+
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    status: taskStatusEnum('status').notNull().default('todo'),
+    priority: taskPriorityEnum('priority').notNull().default('normal'),
+    dueDate: date('due_date'),
+    projectName: text('project_name'),
+    /** 요청자 표시명 */
+    requester: text('requester'),
+    requesterEmail: text('requester_email'),
+    /** 근거/출처 메일 */
+    sourceEmailId: bigint('source_email_id', { mode: 'number' }).references(() => emails.id, { onDelete: 'set null' }),
+    threadKey: text('thread_key'),
+    /** 진행 메모 (에이전트/사용자가 덧붙임) */
+    notes: text('notes').notNull().default(''),
+    /** 기타 메타 (예: 마감 근거 문구) */
+    meta: jsonb('meta').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('tasks_status_due_idx').on(t.status, t.dueDate),
+    index('tasks_project_idx').on(t.projectName),
+    index('tasks_source_email_idx').on(t.sourceEmailId),
+    index('tasks_thread_key_idx').on(t.threadKey),
+  ]
+);
+
+export type TaskRow = typeof tasks.$inferSelect;
+export type NewTaskRow = typeof tasks.$inferInsert;
