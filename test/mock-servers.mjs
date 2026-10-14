@@ -64,6 +64,9 @@ export function startPop3(port) {
       }
     });
   });
+  const sockets = new Set();
+  server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+  state.stop = () => new Promise((res) => { for (const s of sockets) s.destroy(); server.close(() => res()); });
   return new Promise((res) => server.listen(port, '127.0.0.1', () => res({ server, state })));
 }
 

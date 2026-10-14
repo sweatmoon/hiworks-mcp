@@ -63,3 +63,51 @@ export function log(...args: unknown[]): void {
     console.error(new Date().toISOString(), ...args);
   }
 }
+
+/** 원격 서버 / Worker 공통 설정 (환경변수에서 지연 읽기) */
+export interface ProjectRule {
+  name: string;
+  keywords: string[];
+}
+
+export function projectRules(): ProjectRule[] {
+  const raw = process.env['PROJECT_RULES'];
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is ProjectRule => typeof r === 'object' && r !== null && typeof (r as ProjectRule).name === 'string')
+      .map((r) => ({ name: r.name, keywords: Array.isArray(r.keywords) ? r.keywords.map(String) : [] }));
+  } catch {
+    log('PROJECT_RULES 파싱 실패 (JSON 배열이어야 합니다)');
+    return [];
+  }
+}
+
+export const serviceConfig = {
+  get port(): number {
+    return envNumber('PORT', 3000);
+  },
+  get authToken(): string {
+    return process.env['MCP_AUTH_TOKEN'] || '';
+  },
+  get syncIntervalMinutes(): number {
+    return envNumber('SYNC_INTERVAL_MINUTES', 10);
+  },
+  get syncBatchSize(): number {
+    return envNumber('SYNC_BATCH_SIZE', 200);
+  },
+  get selfEmail(): string {
+    return (process.env['HIWORKS_USERNAME'] || '').toLowerCase();
+  },
+  get sentSyncMode(): 'import' | 'webmail' {
+    return process.env['SENT_SYNC_MODE'] === 'webmail' ? 'webmail' : 'import';
+  },
+  get anthropicModel(): string {
+    return process.env['ANTHROPIC_MODEL'] || 'claude-opus-5-5';
+  },
+  get retentionDays(): number {
+    return envNumber('EMAIL_RETENTION_DAYS', 0);
+  },
+};

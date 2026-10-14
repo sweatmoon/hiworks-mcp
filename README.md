@@ -4,16 +4,61 @@
 
 # Hiworks Mail MCP
 
-하이웍스 메일(POP3/SMTP)을 Claude, Cursor 같은 AI 도구에서 읽고·검색하고·보내고·답장할 수 있게 해주는 MCP(Model Context Protocol) 서버입니다.
-"새 메일 확인 → 요약 → 답장 초안 → 첨부 저장" 같은 메일 업무를 자연어로 자동화하는 데 쓸 수 있습니다.
+하이웍스 메일을 AI 도구(Claude, ChatGPT, Cursor)에서 검색·분석할 수 있게 해주는 MCP(Model Context Protocol) 서버입니다. 두 가지 형태로 쓸 수 있습니다.
 
-## 사전 준비
+| 형태 | 용도 | 저장소 | 실행 |
+|---|---|---|---|
+| **원격 서버 (v2)** | Railway 에 배포, Claude Code·ChatGPT 에서 HTTPS 로 연결. PostgreSQL 에 메일을 동기화해 검색·통계·AI 업무일지 제공 | PostgreSQL | `mcp-server` + `mail-worker` 서비스 |
+| **로컬 stdio (v1)** | 내 PC 의 Claude Desktop/Cursor 에서 POP3/SMTP 를 직접 호출 (읽기·보내기·답장) | 없음 | `npx hiworks-mail-mcp` |
 
-하이웍스 웹메일에 로그인해 **메일 > 환경설정 > 기본 설정** 에서 **POP3/SMTP 사용** 을 켜야 합니다. 켜지 않으면 인증 오류가 납니다.
+하이웍스는 POP3/SMTP 만 제공하므로(IMAP 없음) 원격 서버는 받은편지함을 POP3 로 증분 수집하고, 보낸메일은 **편지함 백업 파일 가져오기** 와 **숨은참조 자기 사본** 으로 모읍니다. 자세한 검증 결과는 [docs/SENT_MAIL.md](docs/SENT_MAIL.md) 와 [docs/VERIFICATION.md](docs/VERIFICATION.md) 를 보세요.
 
-## MCP 설정
+## 아키텍처 (원격)
 
-Claude Desktop, Claude Code, Cursor 의 MCP 서버 설정에 아래와 같이 추가합니다.
+```
+Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
+                                      │ DATABASE_URL (Railway 내부망)
+                                      ▼
+                                 PostgreSQL ◀── mail-worker (POP3 증분 동기화, 10분 주기)
+                                      ▲
+                     편지함 백업 ZIP ──┘ (/import 또는 npm run import)
+```
+
+- 동기화 중복 실행은 PostgreSQL advisory lock 으로 막습니다. 실패는 `email_sync_state`/`sync_runs` 에 기록하고 지수 백오프로 재시도합니다.
+- 검색은 `pg_trgm` 부분 일치(한글 조사 변화에 강함) + `tsvector('simple')` 랭킹입니다.
+- AI 업무일지는 발신 메일 중심으로 활동을 추출하고 **모든 활동에 근거 메일 id** 를 붙입니다. 근거가 없거나 확신이 낮으면 `[확인 필요]` 로 표시합니다.
+
+## 원격 서버 도구
+
+| 도구 | 설명 |
+|---|---|
+| `sync_emails` | POP3 동기화 즉시 실행 (잠금·백오프 적용) |
+| `search_emails` | 조건 검색 (query/from/to/subject/since/before/hasAttachments/project, limit/offset, 정렬) |
+| `get_sent_emails` | 보낸 메일만 조회 |
+| `read_email` | 본문·첨부 목록, 스레드 |
+| `get_email_statistics` | 발신·수신 건수, 일/주/월 추이, 주요 상대, 사업별 건수, 미처리 요청 후보 |
+| `extract_work_activities` | 날짜별 업무 활동 추출 (LLM 또는 규칙), work_activities 저장 |
+| `generate_daily_worklog` / `get_daily_worklog` | 업무일지 생성(Markdown+JSON, daily_worklogs 저장) / 조회 |
+| `get_sync_status` | 수집원별 상태·오류·최근 실행·메일 수 |
+| `import_emails` | 백업 파일(EML ZIP/EML/mbox) base64 가져오기 (큰 파일은 `/import`) |
+| `search` / `fetch` | ChatGPT 커넥터 규약용 |
+| `ping` | 연결 확인 |
+
+원격 서버는 **읽기 전용** 입니다. 메일 삭제·발송 도구는 없습니다.
+
+## 빠른 시작 (원격)
+
+1. [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) 대로 PostgreSQL, mcp-server, mail-worker 를 만들고 [.env.example](.env.example) 의 변수를 설정합니다.
+2. 하이웍스 웹메일 **메일 > 환경설정 > 기본 설정** 에서 POP3/SMTP 사용을 켭니다.
+3. 보낸메일 과거분은 **편지함 백업** 파일을 `/import?direction=sent` 로 올립니다. 이후분은 발송 시 자신을 숨은참조에 넣으면 자동 수집됩니다.
+4. [docs/CONNECT_CLIENTS.md](docs/CONNECT_CLIENTS.md) 대로 Claude Code 또는 ChatGPT 에 연결합니다.
+
+```bash
+claude mcp add --transport http hiworks-remote https://<your-app>.up.railway.app/mcp \
+  --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
+```
+
+## 로컬 stdio 서버 (v1 호환)
 
 ```json
 {
@@ -21,109 +66,42 @@ Claude Desktop, Claude Code, Cursor 의 MCP 서버 설정에 아래와 같이 �
     "hiworks-mail": {
       "command": "npx",
       "args": ["-y", "hiworks-mail-mcp@latest"],
-      "env": {
-        "HIWORKS_USERNAME": "your.email@yourcompany.com",
-        "HIWORKS_PASSWORD": "your_password"
-      }
+      "env": { "HIWORKS_USERNAME": "your.email@yourcompany.com", "HIWORKS_PASSWORD": "your_password" }
     }
   }
 }
 ```
 
-Claude Code 에서는 한 줄로도 추가할 수 있습니다.
-
-```bash
-claude mcp add hiworks-mail -e HIWORKS_USERNAME=your.email@yourcompany.com -e HIWORKS_PASSWORD=your_password -- npx -y hiworks-mail-mcp@latest
-```
-
-### 환경변수
-
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `HIWORKS_USERNAME` | (필수) | 하이웍스 이메일 주소 |
-| `HIWORKS_PASSWORD` | (필수) | 하이웍스 비밀번호 |
-| `HIWORKS_STATE_DIR` | `~/.hiworks-mcp` | `check_new_emails` 가 확인한 메일 UID 를 기록하는 폴더 |
-| `HIWORKS_DOWNLOAD_DIR` | `~/Downloads/hiworks-mcp` | `save_attachment` 기본 저장 폴더 |
-| `HIWORKS_POP3_HOST` / `HIWORKS_POP3_PORT` / `HIWORKS_POP3_TLS` | `pop3s.hiworks.com` / `995` / `true` | 수신 서버 |
-| `HIWORKS_SMTP_HOST` / `HIWORKS_SMTP_PORT` / `HIWORKS_SMTP_SECURE` | `smtps.hiworks.com` / `465` / `true` | 발신 서버 |
-| `HIWORKS_POP3_TIMEOUT_MS` | `60000` | POP3 소켓 타임아웃 |
-
-모든 도구는 `username`, `password` 인자를 직접 받을 수도 있지만, 환경변수로 설정해 두는 것을 권장합니다.
-
-## 도구 목록
-
-### 읽기
-
-| 도구 | 설명 |
-|---|---|
-| `search_email` | 최신 메일부터 조건에 맞는 메일 헤더 목록을 반환. `query`, `from`, `to`, `subject`, `since`, `before`, `hasAttachments`, `limit`, `offset`, `scanLimit` |
-| `read_email` | 메일 한 통의 본문·첨부 목록. `messageId` 에는 `search_email` 결과의 `uid` 를 넘기는 것이 가장 빠름 (메일 순번, Message-ID 도 가능) |
-| `check_new_emails` | **지난 호출 이후 새로 온 메일만** 반환. 확인한 UID 를 로컬에 기록해 다음 호출에서 제외. 정기 실행 자동화의 핵심 |
-| `list_attachments` | 첨부 파일 이름·종류·크기 목록 |
-| `save_attachment` | 첨부 파일을 로컬 폴더에 저장하고 경로 반환 (`index` 나 `filename` 미지정 시 전부 저장) |
-| `read_username` | 현재 계정과 서버 설정 확인 (비밀번호는 반환하지 않음) |
-
-### 쓰기
-
-| 도구 | 설명 |
-|---|---|
-| `send_email` | 새 메일 발송. `to`/`cc`/`bcc` 는 문자열(쉼표 구분) 또는 배열. 첨부는 로컬 `path` 또는 `content`(텍스트/base64) |
-| `reply_email` | 받은 메일에 답장. `Re:` 제목, In-Reply-To/References 헤더, 원본 인용을 자동 처리. `replyAll` 지원 |
-| `forward_email` | 메일 전달. 원본 본문과 첨부를 그대로 포함 |
-
-### 날짜
-
-모든 날짜는 KST(`+09:00`) ISO 8601 문자열입니다. `since`/`before` 에 `2025-01-02` 처럼 날짜만 넣으면 KST 기준 그 날의 0시 / 23:59:59 로 해석합니다.
-
-### POP3 의 한계
-
-하이웍스는 IMAP 을 제공하지 않아 POP3 를 사용합니다. 그래서
-
-- 서버 쪽 검색·폴더·읽음 표시가 없습니다. `search_email` 은 최신 메일부터 `scanLimit`(기본 200)개의 헤더를 내려받아 로컬에서 거릅니다. 오래된 메일을 찾으려면 `scanLimit` 을 늘리세요.
-- "읽지 않은 메일" 대신 `check_new_emails` 가 로컬 기록으로 "아직 확인하지 않은 메일" 을 관리합니다.
-- 메일 순번(`msgNum`)은 메일이 삭제되면 바뀝니다. 메일을 다시 참조할 때는 `uid` 를 쓰세요.
-
-## 업무 자동화 예시
-
-MCP 를 연결한 뒤 Claude 에게 이렇게 말하면 됩니다.
-
-**아침 메일 브리핑**
-> 새 메일을 확인해서 보낸사람·제목·핵심 요청을 한 줄씩 정리해 줘. 회신이 필요한 메일은 따로 표시해 줘.
-
-**특정 거래처 메일 추적**
-> 이번 달 `@vendor.com` 에서 온 메일을 모두 찾아서 날짜순으로 요약해 줘.
-
-**답장 초안 → 확인 후 발송**
-> 방금 온 "회의 일정 조율" 메일에 "다음 주 화요일 오후 2시 가능합니다" 라고 정중하게 답장 초안을 써서 보여 줘. 내가 OK 하면 보내 줘.
-
-**첨부 파일 정리**
-> 첨부가 있는 최근 메일 중 제목에 "견적" 이 들어간 것의 첨부를 모두 `~/Documents/견적` 에 저장해 줘.
-
-**정기 실행 (Claude Code 루틴 / cron)**
-Claude Code 의 예약 실행이나 OS 스케줄러로 아래 프롬프트를 주기적으로 돌리면 새 메일만 골라 처리할 수 있습니다. `check_new_emails` 는 한 번 확인한 메일을 다시 돌려주지 않습니다.
-> `check_new_emails` 로 새 메일을 확인하고, "[긴급]" 이 제목에 있거나 상사가 보낸 메일이 있으면 내용을 요약해서 알려 줘. 광고·뉴스레터는 무시해.
-
-## 주의사항
-
-- 비밀번호는 평문 환경변수로 전달됩니다. 설정 파일 권한을 관리하고 공용 PC 에서는 사용하지 마세요.
-- `send_email`, `reply_email`, `forward_email` 은 실제로 메일을 발송합니다. 자동화 프롬프트에서는 "보내기 전에 내용을 보여 주고 확인받아" 와 같이 승인 단계를 두는 것을 권장합니다.
-- 대량 발송 시 하이웍스 정책을 준수하세요.
+도구: `search_email`, `read_email`, `check_new_emails`(새 메일만), `list_attachments`, `save_attachment`, `send_email`, `reply_email`, `forward_email`, `read_username`. 모든 날짜는 KST(+09:00)입니다. 환경변수 `HIWORKS_STATE_DIR`, `HIWORKS_DOWNLOAD_DIR` 로 상태·다운로드 폴더를 바꿀 수 있습니다.
 
 ## 개발
 
 ```bash
 npm install
-npm run build      # TypeScript → build/
-npm test           # 목 POP3/SMTP 서버로 모든 도구를 검증하는 통합 테스트 (실제 계정 불필요)
-NODE_ENV=development node build/index.js   # stderr 로 디버그 로그 출력
+npm run build
+npm run test:local                       # 목 POP3/SMTP 로 stdio 서버 검증 (DB 불필요)
+DATABASE_URL=postgres://... npm run test:remote   # 실제 PostgreSQL 로 원격 스택 검증 (public 스키마를 초기화하므로 전용 DB 사용)
+npm run db:generate                      # 스키마 변경 후 마이그레이션 SQL 생성
+npm run start:server / npm run start:worker
 ```
 
-MCP Inspector 로 직접 호출해 볼 수도 있습니다.
+프로젝트 구조:
 
-```bash
-HIWORKS_USERNAME=... HIWORKS_PASSWORD=... npx @modelcontextprotocol/inspector node build/index.js
 ```
+src/index.ts            로컬 stdio MCP
+src/remote/             원격 HTTP MCP 서버 (server.ts, tools.ts, auth.ts)
+src/worker/main.ts      Mail Worker
+src/sync/               POP3 증분 동기화, 가져오기, 잠금, 상태, (미검증) 웹메일 수집기
+src/search/ src/stats/  검색, 통계
+src/worklog/            AI 업무일지 (Anthropic SDK, 근거 검증)
+src/db/ drizzle/        Drizzle 스키마, 마이그레이션
+docs/                   계획, 검증 결과, 배포, 연결, 보낸메일 가이드
+```
+
+## 보안
+- 자격증명·토큰은 환경변수로만 전달하고 로그에 남기지 않습니다.
+- 원격 서버는 `MCP_AUTH_TOKEN` 없이는 기동하지 않으며 모든 `/mcp`, `/import` 요청에 인증이 필요합니다.
+- 단일 개인 계정 전용입니다. `EMAIL_RETENTION_DAYS` 로 보관기간을 둘 수 있습니다.
 
 ## 라이선스
-
-MIT. 자세한 내용은 [LICENSE](./LICENSE) 파일을 참고하세요.
+MIT. [LICENSE](./LICENSE)
