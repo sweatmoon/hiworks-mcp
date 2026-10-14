@@ -1,6 +1,6 @@
 {
   "name": "hiworks-mail-mcp",
-  "version": "1.0.12",
+  "version": "1.1.0",
   "description": "하이웍스 메일 시스템과 연동하여 메일 조회 및 전송을 할 수 있는 MCP 서버",
   "main": "build/index.js",
   "bin": {
@@ -9,13 +9,15 @@
   "type": "module",
   "files": [
     "build",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
     "dev": "tsc -w",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "npm run build && node test/e2e.mjs"
   },
   "keywords": [
     "hiworks",
@@ -23,12 +25,15 @@
     "mcp",
     "pop3",
     "smtp",
-    "cursor"
+    "cursor",
+    "hiworks-mail",
+    "automation",
+    "claude"
   ],
   "author": "Beyless AI <dev@beyless.com>",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "mailparser": "^3.7.2",
     "node-pop3": "^0.9.1",
     "nodemailer": "^6.10.1",
