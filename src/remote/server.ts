@@ -14,7 +14,6 @@ import { runMigrations } from '../db/migrate.js';
 import { importFile, type ImportProgress } from '../sync/import.js';
 import { listSyncStates } from '../sync/state.js';
 import { isAuthorized } from './auth.js';
-import { handleDashboard } from './dashboard.js';
 import { buildMcpServer } from './tools.js';
 
 /** 하이웍스 편지함 백업은 4GB 단위로 분할된다. */
@@ -141,8 +140,6 @@ export function createHttpServer(): http.Server {
     const segments = url.pathname.split('/').filter(Boolean);
     try {
       if (url.pathname === '/health' || url.pathname === '/') return await handleHealth(res);
-      // 팀 업무 현황판: 정적 파일만 내려주고 데이터는 브라우저가 Google 로그인으로 직접 읽는다 (토큰 인증 대상 아님)
-      if (await handleDashboard(url.pathname, req.method || 'GET', res)) return;
 
       // /mcp 또는 /mcp/<token>, /import 또는 /import/<token>
       const route = segments[0];
@@ -178,7 +175,7 @@ async function main(): Promise<void> {
   const server = createHttpServer();
   // 호스트를 지정하지 않으면 '::' 듀얼스택으로 IPv4·IPv6 모두 받는다 (Railway 프록시는 IPv6 로 접속한다)
   server.listen(serviceConfig.port, () => {
-    console.error(`hiworks MCP server ${PACKAGE_VERSION} listening on :${serviceConfig.port} (/mcp, /health, /import, /dashboard)`);
+    console.error(`hiworks MCP server ${PACKAGE_VERSION} listening on :${serviceConfig.port} (/mcp, /health, /import)`);
   });
   const shutdown = () => {
     server.close(() => {

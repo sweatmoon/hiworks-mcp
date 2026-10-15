@@ -44,35 +44,5 @@
 - 로그에는 메일 원문·자격증명을 남기지 않는다 (`NODE_ENV=development` 일 때만 디버그 로그).
 - 보관기간: `EMAIL_RETENTION_DAYS` 로 오래된 메일을 자동 삭제할 수 있다.
 
-## 7. 팀 업무 현황판 웹앱 (/dashboard)
-mcp-server 가 `https://<domain>/dashboard/` 에서 팀 업무 현황판(팀원별 투입시간·주간 근무표·제안 사업·감리 투입)을 내려준다.
-
-- 서버는 정적 파일과 설정만 준다. 시트는 **브라우저가 로그인한 사람의 Google 계정으로 직접 읽는다** (범위 `spreadsheets.readonly`). 서버에는 Google 자격증명도 업무 데이터도 저장되지 않는다.
-- 누가 볼 수 있는지는 각 시트의 Google 공유 설정이 정한다. 시트 열람 권한이 없는 계정으로 로그인하면 데이터가 비어 있고 상단에 실패한 시트가 표시된다.
-- 휴대폰에서는 브라우저 메뉴의 **홈 화면에 추가** 로 앱처럼 쓸 수 있다.
-
-### Google OAuth 클라이언트 만들기 (1회)
-1. Google Cloud Console → 프로젝트 선택(없으면 생성) → **API 및 서비스 → 라이브러리** 에서 **Google Sheets API** 사용 설정.
-2. **OAuth 동의 화면**: 사용자 유형은 회사 Google Workspace 라면 **내부** (검수 불필요). 범위에 `.../auth/spreadsheets.readonly` 추가.
-3. **사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID** → 애플리케이션 유형 **웹 애플리케이션**.
-   - 승인된 자바스크립트 원본: `https://<mcp-server 도메인>` (경로 없이). 리디렉션 URI 는 필요 없다.
-4. 만든 **클라이언트 ID** 를 아래 변수에 넣는다. 클라이언트 보안 비밀번호(secret)는 쓰지 않는다.
-
-### mcp-server Variables
-- `DASHBOARD_GOOGLE_CLIENT_ID` = 위 클라이언트 ID (`….apps.googleusercontent.com`)
-- `DASHBOARD_SOURCES` = 데이터셋 id → 시트 위치 JSON. 시트 ID 는 저장소에 두지 않고 이 변수에만 둔다.
-  ```json
-  {"hyeonho":{"spreadsheetId":"<업무일지_김현호 ID>","range":"업무일지!A1:G2000"},
-   "taeho":{…}, "yeonho":{…}, "kyeonghun":{…}, "minju":{…}, "youngwon":{…}, "suji":{…}, "hyeonjeong":{…},
-   "tasks":{"spreadsheetId":"<작업배정이 있는 시트 ID>","range":"작업배정!A1:F1000"},
-   "holidays":{"spreadsheetId":"<공휴일이 있는 시트 ID>","range":"공휴일!A1:C500"}}
-  ```
-  팀원 id 는 `web/dashboard/app.js` 의 `IDS` 와 같아야 한다. 변수가 없거나 JSON 이 틀리면 로그인 화면에 무엇이 빠졌는지 표시된다.
-
-### 보안
-- `/dashboard` 는 `MCP_AUTH_TOKEN` 인증 대상이 아니다. 페이지 자체에는 데이터가 없고, 데이터 접근은 Google 로그인과 시트 공유 권한으로만 이뤄진다.
-- 응답에 CSP(스크립트는 자기 도메인과 Google 로그인만), `frame-ancestors 'none'`, `referrer-policy: no-referrer` 를 붙인다. d3 는 CDN 이 아니라 서버가 `node_modules` 에서 직접 내려준다.
-- 로그인 토큰(1시간 유효)은 탭의 sessionStorage 에만 두며, 로그아웃하면 Google 에 폐기 요청을 보낸다.
-
 ## 검증 상태
 Railway 계정과 네트워크가 없는 환경에서 작성했다. Dockerfile 은 로컬 Docker 데몬이 없어 **이미지 빌드를 실행하지 못했다** (표준 multi-stage 구성이며 `npm ci → tsc → prune` 순서). 실제 배포 시 빌드 로그를 확인해야 한다.

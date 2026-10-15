@@ -55,9 +55,6 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 
 원격 서버는 메일에 대해 **읽기 전용** 입니다(쓰기는 할 일 테이블만). 메일 삭제·발송 도구는 없습니다.
 
-## 팀 업무 현황판 웹앱
-원격 서버의 `/dashboard/` 에서 팀원 업무일지(Google 시트)를 모은 현황판을 제공합니다. 데이터는 브라우저가 Google 로그인(읽기 전용)으로 시트에서 직접 읽으며 서버에 저장하지 않습니다. 설정은 [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md#7-팀-업무-현황판-웹앱-dashboard) 를 보세요.
-
 ## 빠른 시작 (원격)
 
 1. [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) 대로 PostgreSQL, mcp-server, mail-worker 를 만들고 [.env.example](.env.example) 의 변수를 설정합니다.
