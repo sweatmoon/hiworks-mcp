@@ -3,6 +3,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { zipSync, strToU8 } from 'fflate';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import pg from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -26,7 +29,7 @@ if (!process.env.DATABASE_URL) {
 
 const { getDb, closeDb, getPool } = await import('../build/db/client.js');
 const { runMigrations } = await import('../build/db/migrate.js');
-const { importMessages, extractMessages } = await import('../build/sync/import.js');
+const { importMessages, importFile, extractMessages, decodeEntryName } = await import('../build/sync/import.js');
 const { runSync } = await import('../build/sync/runner.js');
 const { withAdvisoryLock, SYNC_LOCK_KEY } = await import('../build/sync/lock.js');
 const { getSyncState } = await import('../build/sync/state.js');
@@ -93,6 +96,28 @@ test('import: zip of EML (sent backup), dedup, mbox', async () => {
   const a = await searchEmails(db, { project: 'A사업' });
   assert.equal(a.total, 1);
   assert.equal(extractMessages(Buffer.from('plain'), 'x.eml').length, 1);
+
+  // 대용량 백업 경로: 디스크 파일 → ZIP 스트리밍, 중첩 ZIP, 확장자 없는 항목(내용으로 판별), 진행 콜백
+  const inner = zipSync({ 'inner/n1.eml': strToU8(eml({ id: 'nested1@self', from: `Me <${SELF}>`, to: 'q@w.com', subject: '중첩 ZIP', date: 'Thu, 04 Dec 2025 12:00:00 +0900', text: 'nested' })) });
+  const outer = zipSync({
+    'backup/part1.zip': inner,
+    'backup/noext': strToU8(eml({ id: 'noext@self', from: `Me <${SELF}>`, to: 'q@w.com', subject: '확장자 없음', date: 'Thu, 04 Dec 2025 12:10:00 +0900', text: 'x' })),
+    'backup/skip.txt': strToU8('not a mail'),
+    'backup/empty.eml': new Uint8Array(0),
+  });
+  const tmpZip = path.join(os.tmpdir(), `hiworks-test-${Date.now()}.zip`);
+  fs.writeFileSync(tmpZip, Buffer.from(outer));
+  const progress = [];
+  const f = await importFile(db, tmpZip, { direction: 'sent', onProgress: (p) => progress.push(p.files) });
+  fs.rmSync(tmpZip, { force: true });
+  assert.equal(f.files, 2);
+  assert.equal(f.newCount, 2);
+  assert.equal(f.failed, 0);
+  assert.deepEqual(progress, [1, 2]);
+  assert.equal((await searchEmails(db, { query: '중첩 ZIP', direction: 'sent' })).total, 1);
+  // 알집/하이웍스 백업의 CP949 파일명 복원
+  assert.equal(decodeEntryName(Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x65, 0x6d, 0x6c])), '한글.eml');
+  assert.equal(decodeEntryName(Buffer.from('유니코드.eml', 'utf8')), '유니코드.eml');
 });
 
 test('inbox sync: incremental, bcc-to-self as sent, uid backfill, lock', async () => {
@@ -434,7 +459,12 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
 
     // HTTP 업로드 가져오기
     const zip = zipSync({ 'a.eml': strToU8(eml({ id: 'http-import@self', from: `Me <${SELF}>`, to: 'a@b.com', subject: 'HTTP 업로드', date: 'Fri, 05 Sep 2025 11:00:00 +0900', text: 'y' })) });
-    const up = await fetch(`${base}/import?direction=sent&filename=backup.zip`, { method: 'POST', headers: { 'x-api-key': process.env.MCP_AUTH_TOKEN, 'content-type': 'application/zip' }, body: Buffer.from(zip) }).then((r) => r.json());
+    const upRes = await fetch(`${base}/import?direction=sent&filename=backup.zip`, { method: 'POST', headers: { 'x-api-key': process.env.MCP_AUTH_TOKEN, 'content-type': 'application/zip' }, body: Buffer.from(zip) });
+    assert.equal(upRes.status, 200);
+    const lines = (await upRes.text()).trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(lines[0].status, 'uploaded');
+    const up = lines[lines.length - 1];
+    assert.equal(up.status, 'done');
     assert.equal(up.newCount, 1);
     assert.equal((await fetch(`${base}/import`, { method: 'POST', body: 'x' })).status, 401);
   } finally {

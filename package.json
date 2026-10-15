@@ -50,6 +50,7 @@
     "node-pop3": "^0.9.1",
     "nodemailer": "^6.10.1",
     "pg": "^8.23.1",
+    "yauzl": "^3.4.0",
     "zod": "^3.24.3"
   },
   "devDependencies": {
@@ -57,6 +58,7 @@
     "@types/node": "^20.11.30",
     "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8.23.1",
+    "@types/yauzl": "^3.4.0",
     "drizzle-kit": "^0.31.11",
     "typescript": "^5.4.3"
   },
