@@ -27,6 +27,12 @@ description: 하이웍스 메일 기반 업무관리 에이전트. 아침 브리
    - 어제 완료 N건
 4. 사용자가 "등록해" 라고 하면 제안한 내용대로 `create_task` 를 호출하고 id 를 보고한다.
 
+## 전날 업무 브리핑 / 업무일지
+1. `daily_activity({ date })` (기본 어제, KST). 월요일이면 금·토·일 각각 호출.
+2. `sentThreads` 는 수행 업무의 근거(발신 메일), `receivedRequests` 는 받은 요청과 `repliedAfter`(회신 여부), `tasksCompleted`/`tasksCreated` 는 할 일 변동.
+3. 형식: "어제 수행한 업무(발신 기준) → 받은 요청과 처리 → 완료·등록한 할 일 → 오늘 챙길 것(daily_brief) → 비고". 각 항목에 `(#메일id)` 근거. 사업명은 제목 태그·본문의 발주처명을 그대로.
+4. 업무일지 시트 도구가 있으면 기존 행 형식을 읽고 같은 형식으로 추가한다. 없으면 건너뛰고 알린다.
+
 ## 메일에서 할 일 등록
 1. `find_actionable_emails({ since, before })` 로 후보를 얻는다.
 2. 후보마다 `read_email({ id })` 로 본문을 읽고 실제 요청인지, 누가 무엇을 언제까지 원하는지 판단한다.
@@ -46,7 +52,8 @@ description: 하이웍스 메일 기반 업무관리 에이전트. 아침 브리
 ## 도구 요약
 | 도구 | 용도 |
 |---|---|
-| `daily_brief` | 브리핑 원자료 |
+| `daily_brief` | 오늘 브리핑 원자료 |
+| `daily_activity` | 하루(어제) 업무 내역 원자료: 발신 스레드, 받은 요청·회신, 할 일 변동 |
 | `find_actionable_emails` | 할 일 후보 메일 |
 | `create_task` / `update_task` / `list_tasks` / `get_task` | 할 일 CRUD |
 | `get_reply_context` | 답장 맥락 |
