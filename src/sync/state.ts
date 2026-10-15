@@ -104,3 +104,8 @@ export async function closeInterruptedRuns(db: Db): Promise<number> {
   }
   return rows.length;
 }
+
+/** 동기화 진행 중 심박. 잠금 보유자가 살아 있음을 알린다 (updated_at 갱신). */
+export async function heartbeat(db: Db, source: SyncSource): Promise<void> {
+  await db.update(emailSyncState).set({ updatedAt: new Date() }).where(eq(emailSyncState.source, source));
+}

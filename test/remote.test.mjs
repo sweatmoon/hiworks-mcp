@@ -124,11 +124,17 @@ test('inbox sync: incremental, bcc-to-self as sent, uid backfill, lock', async (
 
   // 다른 세션이 잠금을 쥐고 있으면 실행하지 않는다
   const other = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  other.on('error', () => {}); // 강제 종료 시 발생하는 오류 무시
   await other.connect();
   await other.query('select pg_advisory_lock(hashtext($1))', [SYNC_LOCK_KEY]);
   const blocked = await runSync(db, { sources: ['pop3'] });
-  assert.equal(blocked.acquired, false);
-  await other.end();
+  assert.equal(blocked.acquired, false, '심박이 최근이면 잠금을 존중한다');
+  // 심박이 20분 전이면 죽은 프로세스로 보고 잠금을 끊고 진행한다
+  await other.query("update email_sync_state set updated_at = now() - interval '20 minutes'");
+  const broke = await runSync(db, { sources: ['pop3'] });
+  assert.equal(broke.acquired, true);
+  assert.equal(broke.brokeStaleLock, true);
+  await other.end().catch(() => {});
   const inner = await withAdvisoryLock('other-key', async () => 42);
   assert.deepEqual(inner, { acquired: true, result: 42 });
 

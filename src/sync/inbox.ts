@@ -2,7 +2,7 @@ import type { Db } from '../db/client.js';
 import { log, type Credentials } from '../config.js';
 import { Pop3Session } from '../services/pop3.js';
 import { fingerprint, insertEmail, knownSourceUids, prepareEmail, type PreparedEmail } from './store.js';
-import type { RunOutcome } from './state.js';
+import { heartbeat, type RunOutcome } from './state.js';
 
 /** 한 통을 내려받는 데 허용하는 최대 시간. 넘기면 실패로 기록하고 다음 메일로 넘어간다 (세션은 새로 연다). */
 const RETR_TIMEOUT_MS = Number(process.env['SYNC_RETR_TIMEOUT_MS'] || 180000);
@@ -72,6 +72,7 @@ export async function syncInbox(db: Db, creds: Credentials, opts: InboxSyncOptio
     let failed = 0;
     let lastUid: string | null = null;
     for (const [i, ref] of batch.entries()) {
+      if (i > 0 && i % 10 === 0) await heartbeat(db, 'pop3');
       if (i > 0 && i % 50 === 0) console.error(`  sync progress ${i}/${batch.length} (남음 ${pending.length - i})`);
       try {
         const parsed = await withTimeout(session.retrieve(ref.msgNum), RETR_TIMEOUT_MS, `RETR ${ref.msgNum} (${ref.size ?? '?'} bytes)`);

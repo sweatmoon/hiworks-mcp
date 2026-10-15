@@ -29,3 +29,27 @@ export async function withAdvisoryLock<T>(
     client.release();
   }
 }
+
+/**
+ * 잠금을 쥔 세션의 PID 를 찾는다 (bigint advisory lock: classid=상위 32비트, objid=하위 32비트).
+ */
+export async function lockHolderPid(key: string): Promise<number | null> {
+  const res = await getPool().query<{ pid: number }>(
+    `select l.pid from pg_locks l
+      where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+        and l.classid = ((hashtext($1)::bigint >> 32) & 4294967295)
+        and l.objid = (hashtext($1)::bigint & 4294967295)
+        and l.pid <> pg_backend_pid()
+      limit 1`,
+    [key]
+  );
+  return res.rows[0]?.pid ?? null;
+}
+
+/** 죽은 프로세스가 남긴 잠금을 끊는다. 심박이 오래 끊겼을 때만 호출할 것. */
+export async function breakStaleLock(key: string): Promise<boolean> {
+  const pid = await lockHolderPid(key);
+  if (!pid) return false;
+  const res = await getPool().query<{ ok: boolean }>('select pg_terminate_backend($1) as ok', [pid]);
+  return Boolean(res.rows[0]?.ok);
+}
