@@ -87,3 +87,20 @@ export async function trackRun(
     return { newCount: 0, skippedCount: 0, ok: false, error: message };
   }
 }
+
+/**
+ * 프로세스가 재시작되면서 끝맺지 못한 실행 기록을 정리한다.
+ * 호출자는 동기화 잠금을 쥔 상태여야 한다 (다른 프로세스가 실제로 실행 중인 경우를 배제).
+ */
+export async function closeInterruptedRuns(db: Db): Promise<number> {
+  const now = new Date();
+  const rows = await db
+    .update(syncRuns)
+    .set({ status: 'error', finishedAt: now, errorMessage: '프로세스 재시작으로 중단됨 (다음 주기에 이어서 진행)' })
+    .where(eq(syncRuns.status, 'running'))
+    .returning({ id: syncRuns.id });
+  if (rows.length) {
+    await db.update(emailSyncState).set({ status: 'idle', updatedAt: now }).where(eq(emailSyncState.status, 'running'));
+  }
+  return rows.length;
+}

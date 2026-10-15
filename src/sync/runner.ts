@@ -7,7 +7,7 @@ import { syncSentFromWebmail } from './sent/webmail.js';
 
 export interface SyncSummary {
   acquired: boolean;
-  results: Array<{ source: SyncSource; ok: boolean; newCount: number; skippedCount: number; error?: string; skippedReason?: string }>;
+  results: Array<{ source: SyncSource; ok: boolean; newCount: number; skippedCount: number; remaining?: number; error?: string; skippedReason?: string }>;
 }
 
 /**
@@ -40,6 +40,8 @@ export async function runSync(db: Db, opts: { sources?: SyncSource[]; force?: bo
       });
       log(`sync ${source}:`, outcome.ok ? `+${outcome.newCount} (skip ${outcome.skippedCount})` : `error ${outcome.error}`);
       const entry: SyncSummary['results'][number] = { source, ok: outcome.ok, newCount: outcome.newCount, skippedCount: outcome.skippedCount };
+      const remaining = Number((outcome.details as Record<string, unknown> | undefined)?.['remaining'] ?? 0);
+      if (remaining > 0) entry.remaining = remaining;
       if (outcome.error) entry.error = outcome.error;
       results.push(entry);
     }
