@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161514" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="업무 현황판">
+<title>제안팀 업무 현황판</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+:root{
+  color-scheme:light dark;
+  --font-anthropic-sans:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Malgun Gothic","Noto Sans KR",system-ui,sans-serif;
+  --font-anthropic-serif:var(--font-anthropic-sans);
+  --cds-gap-xs:4px;--cds-gap-sm:8px;--cds-gap-md:12px;--cds-gap-lg:20px;
+  --cds-pad-xs:4px;--cds-pad-sm:8px;--cds-pad-md:12px;--cds-pad-lg:16px;
+  --cds-radius:8px;--cds-dur-slow:.3s;
+  --cds-font-size-caption:12px;--cds-font-size-body:14px;--cds-font-size-heading:16px;--cds-font-size-title:26px;--cds-font-weight-medium:600;
+  --page-bg:#f6f5f2;--color-bg:#ffffff;--color-panel:#ffffff;--color-fg:#1f1e1d;--color-fg-muted:#6b6a66;--color-border-line:#e5e3dd;
+  --color-warn:#b45309;--color-bad:#dc2626;--color-ok:#15803d;--color-skeleton:#ecebe7;
+  --cds-chart-grid:#ecebe7;--cds-chart-reference:#9a9893;--cds-chart-muted:#c9c7c1;--cds-chart-status-critical:#dc2626;
+  --cds-surface-popover:#ffffff;--cds-border:#e5e3dd;--cds-shadow-popover:0 6px 20px rgb(0 0 0 / .12);--cds-text-secondary:#6b6a66;
+  --chart-1:#2563eb;--chart-2:#d97706;--chart-3:#64748b;--chart-4:#7c3aed;--chart-5:#16a34a;--chart-6:#db2777;--chart-7:#0891b2;--chart-8:#65a30d;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --page-bg:#161514;--color-bg:#1c1b1a;--color-panel:#232220;--color-fg:#ecebe7;--color-fg-muted:#a3a19b;--color-border-line:#3a3936;
+    --color-warn:#f59e0b;--color-bad:#f87171;--color-ok:#4ade80;--color-skeleton:#33322f;
+    --cds-chart-grid:#33322f;--cds-chart-reference:#77756f;--cds-chart-muted:#55534f;--cds-chart-status-critical:#f87171;
+    --cds-surface-popover:#2b2a28;--cds-border:#3a3936;--cds-shadow-popover:0 6px 20px rgb(0 0 0 / .5);--cds-text-secondary:#a3a19b;
+    --chart-1:#60a5fa;--chart-2:#fbbf24;--chart-3:#94a3b8;--chart-4:#a78bfa;--chart-5:#4ade80;--chart-6:#f472b6;--chart-7:#22d3ee;--chart-8:#a3e635;
+  }
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page-bg);color:var(--color-fg);font-family:var(--font-anthropic-sans);font-size:var(--cds-font-size-body);line-height:1.45}
+main{max-width:1280px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 32px max(16px,env(safe-area-inset-left))}
+.dash-skeleton{color:transparent !important;background:var(--color-skeleton);border-radius:4px;min-width:2ch;display:inline-block}
+.app-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:var(--cds-gap-sm);margin-bottom:var(--cds-gap-md);font-size:var(--cds-font-size-caption);color:var(--color-fg-muted)}
+.app-bar button,.gate button{font:inherit;color:var(--color-fg);background:var(--color-bg);border:1px solid var(--color-border-line);border-radius:var(--cds-radius);padding:4px 10px;cursor:pointer}
+.app-bar button:focus-visible,.gate button:focus-visible{outline:2px solid var(--color-fg);outline-offset:1px}
+.gate{max-width:28rem;margin:12vh auto 0;background:var(--color-panel);border:1px solid var(--color-border-line);border-radius:var(--cds-radius);padding:28px 24px;display:flex;flex-direction:column;gap:12px;text-align:center}
+.gate h1{margin:0;font-size:22px;font-weight:600}
+.gate p{margin:0;color:var(--color-fg-muted)}
+.gate button{font-size:15px;padding:10px 16px;align-self:center}
+.gate button:disabled{opacity:.5;cursor:default}
+.gate .msg{color:var(--color-warn);min-height:1.2em}
+</style>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main>
+  <section class="gate" id="gate" hidden>
+    <h1>제안팀 업무 현황판</h1>
+    <p>팀원 업무일지 시트를 열람할 수 있는 Google 계정으로 로그인하세요. 시트는 이 브라우저에서 읽기 전용으로만 읽습니다.</p>
+    <button type="button" id="gate-login">Google 계정으로 로그인</button>
+    <p class="msg" id="gate-msg" role="status"></p>
+  </section>
+  <div class="app-bar" id="app-bar" hidden>
+    <span id="app-status" role="status"></span>
+    <button type="button" id="app-refresh">새로고침</button>
+    <button type="button" id="app-signout">로그아웃</button>
+  </div>
+<div class="tm" id="team-board" hidden>
+  <header class="tm-head">
+    <div>
+      <h1 class="tm-title">제안팀 업무 현황판</h1>
+      <p class="tm-take" id="takeaway"><span id="take-month">—</span> 팀 투입 <b class="dash-skeleton" data-source="team_month" data-field="total">—</b>시간, 미입력 평일 <b class="dash-skeleton" data-source="team_month" data-field="missing">—</b>일 · 기준일 <span class="dash-skeleton" data-source="ref" data-field="ref" data-row="0">—</span></p>
+    </div>
+    <div class="tm-controls">
+      <label class="tm-lab" for="month-pick">월</label>
+      <select class="tm-input" id="month-pick" data-source="team_month"></select>
+    </div>
+  </header>
+  <p class="tm-alert" id="load-alert" hidden></p>
+
+  <div class="tm-tabs" role="tablist" aria-label="화면">
+    <button class="tm-tab" role="tab" id="tab-hours" aria-controls="hours" aria-selected="true">팀원별 투입시간</button>
+    <button class="tm-tab" role="tab" id="tab-calendar" aria-controls="calendar" aria-selected="false">주간 근무표</button>
+    <button class="tm-tab" role="tab" id="tab-proposals" aria-controls="proposals" aria-selected="false">제안 사업 현황</button>
+    <button class="tm-tab" role="tab" id="tab-audit" aria-controls="audit" aria-selected="false">감리 투입 현황</button>
+  </div>
+
+  <section class="tm-panel" id="hours" role="tabpanel" aria-labelledby="tab-hours">
+    <div class="tm-kpis">
+      <div class="tm-kpi"><span class="l">팀 투입시간</span><span class="v"><span class="dash-skeleton m-team" data-source="team_month" data-field="total">—</span><span class="u">h</span></span></div>
+      <div class="tm-kpi"><span class="l">제안</span><span class="v"><span class="dash-skeleton m-team" data-source="team_month" data-field="proposal">—</span><span class="u">h</span></span></div>
+      <div class="tm-kpi"><span class="l">감리</span><span class="v"><span class="dash-skeleton m-team" data-source="team_month" data-field="audit">—</span><span class="u">h</span></span></div>
+      <div class="tm-kpi"><span class="l">기타·교육</span><span class="v"><span class="dash-skeleton m-team" data-source="team_month" data-field="otherTraining">—</span><span class="u">h</span></span></div>
+      <div class="tm-kpi" id="kpi-missing"><span class="l">미입력 평일</span><span class="v"><span class="dash-skeleton m-team" data-source="team_month" data-field="missing">—</span><span class="u">일</span></span></div>
+      <div class="tm-kpi"><span class="l">하루 8시간 초과</span><span class="v"><span class="dash-skeleton m-team" data-source="team_month" data-field="over8">—</span><span class="u">일</span></span></div>
+    </div>
+    <div class="tm-grid">
+      <article class="tm-card" id="card-mix">
+        <h2>팀원별 업무 구성</h2>
+        <p class="tm-note">선택한 달, 구분별 시간(기준일까지)</p>
+        <div class="tm-legend" id="mix-legend"></div>
+        <div class="tm-chart" id="mix-chart" data-source="member_month"></div>
+      </article>
+      <article class="tm-card" id="card-weeks">
+        <h2>주간 투입시간</h2>
+        <p class="tm-note">선택한 달까지 12주, 점선은 주 40시간</p>
+        <div class="tm-chart tm-mini" id="week-chart" data-source="member_week"></div>
+      </article>
+    </div>
+    <article class="tm-card" id="card-members">
+      <h2>팀원별 상세</h2>
+      <p class="tm-note">미입력 평일: 기준일까지 기록이 하나도 없는 평일(공휴일 시트의 휴일 제외)</p>
+      <div class="tm-tablewrap">
+        <table class="tm-t" id="member-table" data-source="member_month" data-row-key="month,member">
+          <thead><tr>
+            <th data-field="member">팀원</th>
+            <th class="n" data-field="total">합계(h)</th>
+            <th class="n" data-field="proposal">제안</th>
+            <th class="n" data-field="audit">감리</th>
+            <th class="n" data-field="other">기타</th>
+            <th class="n" data-field="training">교육</th>
+            <th class="n" data-field="leave">휴가</th>
+            <th class="n" data-field="missing">미입력(일)</th>
+            <th class="n" data-field="over8">8h 초과(일)</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="tm-panel" id="calendar" role="tabpanel" aria-labelledby="tab-calendar" hidden>
+    <div class="tm-kpis">
+      <div class="tm-kpi"><span class="l">이번 주 팀 투입</span><span class="v"><span class="dash-skeleton" id="ck-hours">—</span><span class="u">h</span></span></div>
+      <div class="tm-kpi"><span class="l">이번 주 제안 마감</span><span class="v"><span class="dash-skeleton" id="ck-due">—</span><span class="u">건</span></span></div>
+      <div class="tm-kpi" id="ck-un-box"><span class="l">그중 미배정·담당 확인 필요</span><span class="v"><span class="dash-skeleton" id="ck-un">—</span><span class="u">건</span></span></div>
+      <div class="tm-kpi"><span class="l">감리 현장(인·일)</span><span class="v"><span class="dash-skeleton" id="ck-field">—</span><span class="u">일</span></span></div>
+      <div class="tm-kpi"><span class="l">휴가·교육(인·일)</span><span class="v"><span class="dash-skeleton" id="ck-away">—</span><span class="u">일</span></span></div>
+      <div class="tm-kpi" id="ck-miss-box"><span class="l">미입력(인·일)</span><span class="v"><span class="dash-skeleton" id="ck-miss">—</span><span class="u">일</span></span></div>
+    </div>
+    <article class="tm-card" id="card-cal">
+      <div class="tm-head">
+        <h2 id="cal-title">주간 근무표</h2>
+        <div class="tm-controls">
+          <button class="tm-btn" id="cal-prev" type="button" aria-label="이전 주">◀</button>
+          <select class="tm-input" id="cal-week" aria-label="주 선택"></select>
+          <button class="tm-btn" id="cal-next" type="button" aria-label="다음 주">▶</button>
+          <button class="tm-btn" id="cal-today" type="button">이번 주</button>
+        </div>
+      </div>
+      <p class="tm-note">감리·휴가·교육이 하루 8시간이면 그 상태로, 다른 업무와 섞이면 복합으로 표시. 칸 아래 막대는 작업배정 시트의 제안 마감(앞 이름이 정담당). 칸을 누르면 그날 기록을 봅니다</p>
+      <div class="tm-legend" id="cal-legend"></div>
+      <div class="tm-calhost" id="cal-host">
+        <div class="tm-calwrap" id="cal-wrap" data-source="day_cells"></div>
+      </div>
+    </article>
+    <dialog class="tm-dlg" id="cal-dlg" aria-labelledby="cal-dlg-title">
+      <button class="tm-btn tm-dlg-x" type="button" id="cal-dlg-x">닫기</button>
+      <h3 id="cal-dlg-title"></h3>
+      <div id="cal-dlg-body"></div>
+    </dialog>
+  </section>
+
+  <section class="tm-panel" id="proposals" role="tabpanel" aria-labelledby="tab-proposals" hidden>
+    <div class="tm-kpis">
+      <div class="tm-kpi"><span class="l">진행 중 사업</span><span class="v"><span class="dash-skeleton" data-source="proposal_summary" data-field="active" data-row="0">—</span><span class="u">건</span></span></div>
+      <div class="tm-kpi"><span class="l">최근 30일 제출</span><span class="v"><span class="dash-skeleton" data-source="proposal_summary" data-field="submitted30" data-row="0">—</span><span class="u">건</span></span></div>
+      <div class="tm-kpi"><span class="l">최근 90일 제출 사업 평균 공수</span><span class="v"><span class="dash-skeleton" data-source="proposal_summary" data-field="avgHours90" data-row="0">—</span><span class="u">h</span></span></div>
+      <div class="tm-kpi"><span class="l">팀 표준 공수(기본)</span><span class="v">15<span class="u">h</span></span></div>
+    </div>
+    <article class="tm-card" id="card-proposals">
+      <h2>제안 사업</h2>
+      <p class="tm-note">팀원 업무일지의 제안 행을 사업명별로 합친 것. 단계는 준비·작성·서류·검수·제출·평가, 막대의 세로선은 표준 15h</p>
+      <div class="tm-controls">
+        <input class="tm-input" id="p-search" type="search" placeholder="사업명·팀원 검색" aria-label="사업명·팀원 검색">
+        <select class="tm-input" id="p-filter" aria-label="상태">
+          <option value="active">진행 중</option>
+          <option value="90">최근 90일</option>
+          <option value="all">전체</option>
+        </select>
+        <span class="tm-lab" id="p-count"></span>
+      </div>
+      <div class="tm-tablewrap">
+        <table class="tm-t" id="p-table" data-source="proposals" data-row-key="project">
+          <thead><tr>
+            <th data-field="project">사업명</th>
+            <th data-field="last">최근 기록</th>
+            <th data-field="stageLabel">단계</th>
+            <th class="n" data-field="hours">투입(h)</th>
+            <th data-field="members">참여</th>
+            <th data-field="status">상태</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="tm-panel" id="audit" role="tabpanel" aria-labelledby="tab-audit" hidden>
+    <div class="tm-kpis">
+      <div class="tm-kpi"><span class="l">감리 투입일(인·일)</span><span class="v"><span class="dash-skeleton m-audit" data-source="audit_team_month" data-field="days">—</span><span class="u">일</span></span></div>
+      <div class="tm-kpi"><span class="l">감리 중 제안도 한 날</span><span class="v"><span class="dash-skeleton m-audit" data-source="audit_team_month" data-field="overlap">—</span><span class="u">일</span></span></div>
+      <div class="tm-kpi"><span class="l">감리 투입 팀원</span><span class="v"><span class="dash-skeleton m-audit" data-source="audit_team_month" data-field="members">—</span><span class="u">명</span></span></div>
+    </div>
+    <article class="tm-card" id="card-lanes">
+      <h2>감리 일정</h2>
+      <p class="tm-note">선택한 달, 팀원별 감리 일(색은 사업). 빨간 점은 같은 날 제안 업무도 기록된 날. 앞으로 잡힌 감리도 포함</p>
+      <div class="tm-legend" id="lane-legend"></div>
+      <div class="tm-chart" id="lane-chart" data-source="audit_days"></div>
+    </article>
+    <article class="tm-card" id="card-runs">
+      <h2>감리 기간</h2>
+      <p class="tm-note">연속된 감리 일을 한 기간으로 묶음(4일 이내 공백 허용, 주말·연휴를 잇기 위함). 선택한 달과 겹치는 기간</p>
+      <div class="tm-tablewrap">
+        <table class="tm-t" id="run-table" data-source="audit_runs" data-row-key="member,start">
+          <thead><tr>
+            <th data-field="member">팀원</th>
+            <th data-field="project">사업명</th>
+            <th data-field="start">시작</th>
+            <th data-field="end">종료</th>
+            <th class="n" data-field="days">감리일</th>
+            <th class="n" data-field="overlap">제안 겹침(일)</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+</div>
+</main>
+<script src="config.js"></script>
+<script src="runtime.js"></script>
+<script src="d3.min.js"></script>
+<script src="app.js"></script>
+<script src="https://accounts.google.com/gsi/client" async></script>
+</body>
+</html>

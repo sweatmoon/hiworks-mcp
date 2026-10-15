@@ -15,6 +15,7 @@ ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/build ./build
 COPY --from=build /app/drizzle ./drizzle
+COPY web ./web
 COPY package.json ./
 EXPOSE 3000
 # 기본은 MCP 서버. Worker 는 startCommand 로 `node build/worker/main.js` 를 지정한다.

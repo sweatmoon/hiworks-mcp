@@ -24,7 +24,7 @@
     "db:migrate": "node build/scripts/migrate.js",
     "import": "node build/scripts/import-file.js",
     "webmail:probe": "node build/scripts/webmail-probe.js",
-    "test": "npm run build && node test/e2e.mjs && node --test --test-timeout=60000 test/remote.test.mjs",
+    "test": "npm run build && node test/e2e.mjs && node --test test/dashboard.test.mjs && node --test --test-timeout=60000 test/remote.test.mjs",
     "test:local": "npm run build && node test/e2e.mjs",
     "test:remote": "npm run build && node --test --test-timeout=60000 test/remote.test.mjs"
   },
@@ -44,6 +44,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "d3": "7.9.0",
     "drizzle-orm": "^0.45.4",
     "fflate": "^0.8.3",
     "mailparser": "^3.7.2",
