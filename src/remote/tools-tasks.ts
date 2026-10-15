@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Db } from '../db/client.js';
-import { buildDailyBrief, createTask, findActionableEmails, getReplyContext, getTask, listTasks, taskSummaryCounts, updateTask } from '../tasks/service.js';
+import { buildDailyActivity, buildDailyBrief, createTask, findActionableEmails, getReplyContext, getTask, listTasks, taskSummaryCounts, updateTask } from '../tasks/service.js';
 import { errorResult, jsonResult } from '../tools/common.js';
 
 const statusEnum = z.enum(['todo', 'doing', 'waiting', 'done', 'cancelled']);
@@ -158,6 +158,24 @@ export function registerTaskTools(server: McpServer, db: Db): void {
     async (params) => {
       try {
         return jsonResult({ success: true, ...(await buildDailyBrief(db, params)) });
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    'daily_activity',
+    {
+      title: '하루 업무 내역 원자료',
+      description:
+        '특정 날짜(기본: 어제, KST)의 업무 내역 원자료를 돌려줍니다: 내가 보낸 메일을 스레드별로 묶은 목록(수행 업무 근거), 그날 받은 요청 메일과 회신 여부, 완료·등록한 할 일, 그 밖의 수신 제목. ' +
+        '전날 브리핑과 업무일지 작성의 입력으로 쓰세요. 메일에 없는 업무를 지어내지 말고, 각 항목에 근거 메일 id 를 남기세요.',
+      inputSchema: { date: z.string().optional().describe('YYYY-MM-DD (기본 어제)') },
+    },
+    async (params) => {
+      try {
+        return jsonResult({ success: true, ...(await buildDailyActivity(db, params)) });
       } catch (error) {
         return errorResult(error);
       }

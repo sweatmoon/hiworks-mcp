@@ -37,7 +37,7 @@ const { generateDailyWorklog, getWorklog } = await import('../build/worklog/gene
 const { setWorklogLLM } = await import('../build/worklog/llm.js');
 const { createHttpServer } = await import('../build/remote/server.js');
 const { threadKeyOf } = await import('../build/sync/store.js');
-const { createTask, updateTask, listTasks, getTask, findActionableEmails, buildDailyBrief, getReplyContext } = await import('../build/tasks/service.js');
+const { createTask, updateTask, listTasks, getTask, findActionableEmails, buildDailyBrief, getReplyContext, buildDailyActivity } = await import('../build/tasks/service.js');
 
 const CRLF = '\r\n';
 // 실제 메일 클라이언트처럼 제목은 RFC 2047 로 인코딩한다 (raw 8bit 헤더는 파서마다 처리가 다르다)
@@ -341,6 +341,18 @@ test('tasks: actionable emails, create/update/list, brief, reply context', async
   const todayBrief = await buildDailyBrief(db);
   assert.equal(todayBrief.counts.overdue, 0, 't1 완료, t2 는 2099');
 
+  // 하루 업무 내역: 9/2 는 발신 2통(견적 요청, 회의 답장), 수신 1통(회의 요청, 답장됨)
+  const act = await buildDailyActivity(db, { date: '2025-09-02' });
+  assert.equal(act.stats.sent, 2);
+  assert.equal(act.stats.received, 1);
+  assert.equal(act.sentThreads.length, 2);
+  const meeting = act.sentThreads.find((t) => t.threadKey === '회의 일정 조율');
+  assert.equal(meeting.isReply, true);
+  assert.ok(act.sentThreads.find((t) => t.projectName === 'A사업'));
+  assert.equal(act.stats.requestsReceived, 1);
+  assert.equal(act.stats.requestsReplied, 1);
+  assert.equal(act.tasksCompleted.length, 0);
+
   const ctx = await getReplyContext(db, { taskId: t1.id });
   assert.equal(ctx.email.id, urgent.id);
   assert.equal(ctx.suggestedSubject, 'Re: [긴급] 계약서 검토 요청');
@@ -369,7 +381,7 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
     const client = new Client({ name: 'test', version: '0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } } }));
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    for (const name of ['find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
+    for (const name of ['daily_activity', 'find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
       assert.ok(tools.includes(name), `tool ${name}`);
     }
     const call = async (name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);

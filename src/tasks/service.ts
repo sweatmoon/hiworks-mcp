@@ -30,7 +30,7 @@ export interface TaskView {
   completedAt: string | null;
 }
 
-const REQUEST_PATTERN = '(요청|부탁|확인|검토|회신|문의|제출|승인|회답|답변|가능할까요|해주세요|해 주세요|바랍니다|주시기|please|request|review|confirm|deadline|due)';
+const REQUEST_PATTERN = '(요청|부탁|확인|검토|회신|문의|제출|승인|회답|답변|가능할까요|가능하신|괜찮으신|어떠신가요|어떠세요|주실 수|해주세요|해 주세요|바랍니다|주시기|please|request|review|confirm|deadline|due)';
 const NOISE_SENDER = '(noreply|no-reply|newsletter|notification|mailer-daemon|donotreply|alert|bounce)';
 
 export function todayKST(): string {
@@ -394,3 +394,95 @@ export async function taskSummaryCounts(db: Db): Promise<Record<string, number>>
   return out;
 }
 
+
+export interface SentThreadSummary {
+  threadKey: string;
+  subject: string;
+  projectName: string | null;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  to: string[];
+  emailIds: number[];
+  /** 대표(마지막) 메일 본문 앞부분 */
+  snippet: string;
+  /** 이 스레드에 같은 날 수신 메일이 있었는지 (답장인지) */
+  isReply: boolean;
+}
+
+export interface DailyActivity {
+  date: string;
+  generatedAt: string;
+  stats: { sent: number; received: number; sentThreads: number; requestsReceived: number; requestsReplied: number; tasksCompleted: number; tasksCreated: number };
+  /** 내가 보낸 메일을 스레드별로 묶음 (수행 업무의 근거) */
+  sentThreads: SentThreadSummary[];
+  /** 그날 받은 요청성 메일과 회신 여부 */
+  receivedRequests: ActionableEmail[];
+  tasksCompleted: TaskView[];
+  tasksCreated: TaskView[];
+  /** 자동 발신 제외, 그날 받은 메일 중 요청이 아닌 것의 제목 (참고) */
+  otherReceivedSubjects: string[];
+}
+
+/** 특정 날짜(KST)의 업무 내역 원자료. 업무일지·전날 브리핑의 입력이 된다. 서술은 에이전트가 한다. */
+export async function buildDailyActivity(db: Db, p: { date?: string } = {}): Promise<DailyActivity> {
+  const date = p.date ?? formatKST(new Date(Date.now() - 86400000)).slice(0, 10);
+  const since = parseDateInput(date);
+  const before = parseDateInput(date, true);
+  const dateCol = sql`coalesce(${emails.sentAt}, ${emails.receivedAt}, ${emails.createdAt})`;
+  const rows = await db
+    .select()
+    .from(emails)
+    .where(and(gte(dateCol, since), lte(dateCol, before)))
+    .orderBy(asc(dateCol));
+
+  const received = rows.filter((r) => r.direction === 'received');
+  const receivedThreads = new Set(received.map((r) => r.threadKey).filter(Boolean));
+  const sentGroups = new Map<string, EmailRow[]>();
+  for (const r of rows.filter((r) => r.direction === 'sent')) {
+    const key = r.threadKey || `mid:${r.messageId ?? r.id}`;
+    sentGroups.set(key, [...(sentGroups.get(key) ?? []), r]);
+  }
+  const sentThreads: SentThreadSummary[] = Array.from(sentGroups.entries()).map(([key, list]) => {
+    const last = list[list.length - 1]!;
+    return {
+      threadKey: key,
+      subject: last.subject,
+      projectName: list.find((e) => e.projectName)?.projectName ?? null,
+      count: list.length,
+      firstAt: formatKST(list[0]!.sentAt ?? list[0]!.createdAt),
+      lastAt: formatKST(last.sentAt ?? last.createdAt),
+      to: Array.from(new Set(list.flatMap((e) => e.recipients.filter((x) => x.kind !== 'bcc').map((x) => x.address)))),
+      emailIds: list.map((e) => e.id),
+      snippet: last.bodyText.replace(/\s+/g, ' ').slice(0, 300),
+      isReply: receivedThreads.has(key) || Boolean(last.inReplyTo),
+    };
+  });
+
+  const receivedRequests = await findActionableEmails(db, { since: date, before: date, includeLinked: true, includeReplied: true, limit: 100 });
+  const requestIds = new Set(receivedRequests.map((r) => r.id));
+  const noise = new RegExp(NOISE_SENDER, 'i');
+  const otherReceivedSubjects = received.filter((r) => !requestIds.has(r.id) && !noise.test(r.senderEmail)).map((r) => r.subject).slice(0, 50);
+
+  const completedRows = await db.select().from(tasks).where(and(gte(tasks.completedAt, since), lte(tasks.completedAt, before))).orderBy(asc(tasks.completedAt));
+  const createdRows = await db.select().from(tasks).where(and(gte(tasks.createdAt, since), lte(tasks.createdAt, before))).orderBy(asc(tasks.createdAt));
+
+  return {
+    date,
+    generatedAt: formatKST(new Date()),
+    stats: {
+      sent: rows.length - received.length,
+      received: received.length,
+      sentThreads: sentThreads.length,
+      requestsReceived: receivedRequests.length,
+      requestsReplied: receivedRequests.filter((r) => r.repliedAfter).length,
+      tasksCompleted: completedRows.length,
+      tasksCreated: createdRows.length,
+    },
+    sentThreads,
+    receivedRequests,
+    tasksCompleted: await attachSourceEmails(db, completedRows),
+    tasksCreated: await attachSourceEmails(db, createdRows),
+    otherReceivedSubjects,
+  };
+}
