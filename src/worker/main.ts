@@ -66,7 +66,7 @@ function startHealthServer(): http.Server {
       res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
     }
   });
-  server.listen(serviceConfig.port, '0.0.0.0', () => console.error(`worker health on :${serviceConfig.port}`));
+  server.listen(serviceConfig.port, () => console.error(`worker health on :${serviceConfig.port}`));
   return server;
 }
 

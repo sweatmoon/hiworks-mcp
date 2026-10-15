@@ -111,7 +111,8 @@ async function main(): Promise<void> {
   }
   await runMigrations();
   const server = createHttpServer();
-  server.listen(serviceConfig.port, '0.0.0.0', () => {
+  // 호스트를 지정하지 않으면 '::' 듀얼스택으로 IPv4·IPv6 모두 받는다 (Railway 프록시는 IPv6 로 접속한다)
+  server.listen(serviceConfig.port, () => {
     console.error(`hiworks MCP server ${PACKAGE_VERSION} listening on :${serviceConfig.port} (/mcp, /health, /import)`);
   });
   const shutdown = () => {
