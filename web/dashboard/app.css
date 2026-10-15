@@ -54,7 +54,7 @@ table.tm-t{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums
 .tm-btn:focus-visible{outline:2px solid var(--color-fg);outline-offset:1px}
 .tm-calhost{position:relative}
 .tm-calwrap{overflow:auto}
-table.tm-cal{width:100%;min-width:780px;border-collapse:collapse;table-layout:fixed;font-variant-numeric:tabular-nums}
+table.tm-cal{width:100%;min-width:900px;border-collapse:collapse;table-layout:fixed;font-variant-numeric:tabular-nums}
 .tm-cal th,.tm-cal td{border:1px solid var(--color-border-line);vertical-align:top;padding:var(--cds-pad-xs) var(--cds-pad-sm);text-align:left}
 .tm-cal thead th{background:var(--color-panel);font-weight:400;font-size:var(--cds-font-size-caption);color:var(--color-fg-muted)}
 .tm-cal thead th .d{display:block;color:var(--color-fg);font-size:var(--cds-font-size-body);font-weight:var(--cds-font-weight-medium)}
@@ -69,6 +69,12 @@ table.tm-cal{width:100%;min-width:780px;border-collapse:collapse;table-layout:fi
 .tm-st{font-size:var(--cds-font-size-caption);font-weight:var(--cds-font-weight-medium);margin-right:6px}
 .tm-h{font-size:var(--cds-font-size-caption);color:var(--color-fg-muted)}
 .tm-h.warn{color:var(--color-warn)}
+.tm-rate{font-size:11px;margin-left:6px;color:var(--color-fg-muted);font-variant-numeric:tabular-nums}
+.tm-rate.warn,.tm-cal td.wk>b.warn{color:var(--color-warn)}
+.tm-rate.over,.tm-cal td.wk>b.over{color:var(--color-bad)}
+.tm-cal .wk{width:7.5rem;border-left:2px solid var(--color-border-line);position:sticky;right:0;z-index:1;background:var(--color-panel)}
+.tm-cal td.wk>b{display:block;font-size:var(--cds-font-size-heading);font-weight:var(--cds-font-weight-medium);color:var(--color-fg)}
+.tm-cal td.wk .tm-hbar{display:block;width:100%;margin:4px 0 0}
 .tm-chips{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
 .tm-chip{display:inline-flex;align-items:center;font-size:11px;line-height:1.5;padding:0 6px;border-radius:999px;border:1px solid var(--color-border-line);white-space:nowrap;color:var(--color-fg)}
 .tm-chip .tm-sw{margin-right:4px}

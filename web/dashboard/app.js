@@ -687,7 +687,7 @@
     const end = days[6];
     document.getElementById('cal-title').textContent = `${calWeek.slice(0, 4)}년 ${md(calWeek)} ~ ${md(end)} 주간 근무표`;
     legend(document.getElementById('cal-legend'), TYPES.map(([, label], j) => [dash.colors[j], label]).concat([[dash.colors[0], '제안 마감(작업배정)']]));
-    const kpiIds = ['ck-hours', 'ck-due', 'ck-un', 'ck-field', 'ck-away', 'ck-miss'];
+    const kpiIds = ['ck-util', 'ck-hours', 'ck-due', 'ck-un', 'ck-field', 'ck-away', 'ck-miss'];
     if (isBad(cells.status)) { failed(wrap); kpiIds.forEach((id) => { const e = document.getElementById(id); e.classList.remove('dash-skeleton'); e.textContent = '—'; }); return; }
     if (cells.status !== 'ok') return;
 
@@ -703,6 +703,28 @@
       const any = CAL_MEMBERS.some((n) => cellMap.has(n + '|' + d)) || tasks.some((t) => t.deadline === d);
       return { d, off, hol: holMap.get(d) || '', merge: off && !any };
     });
+
+    // 가동률: 공휴일 아닌 평일 하루 8시간 기준, 휴가 시간은 기준과 업무시간에서 모두 뺀다. 주말·휴일 근무는 업무시간에만 더한다.
+    const util = (n, m) => {
+      const c = cellMap.get(n + '|' + m.d);
+      const leave = c ? c.leave : 0;
+      const counted = !m.off && (m.d < today || (m.d === today && !!c));
+      const avail = counted ? Math.max(0, 8 - leave) : 0;
+      const work = c ? Math.max(0, c.total - leave) : 0;
+      return { work, avail, rate: avail > 0 ? work / avail : null };
+    };
+    const sumUtil = (list) => {
+      const t = list.reduce((a, u) => ({ work: a.work + u.work, avail: a.avail + u.avail }), { work: 0, avail: 0 });
+      return { ...t, rate: t.avail > 0 ? t.work / t.avail : null };
+    };
+    const pct = (r) => String(Math.round(r * 100));
+    const rateCls = (r) => (r < 0.75 ? 'warn' : r > 1.25 ? 'over' : '');
+    const weekOf = new Map(CAL_MEMBERS.map((n) => [n, sumUtil(meta.map((m) => util(n, m)))]));
+    const teamWeek = sumUtil([...weekOf.values()]);
+    const utilEl = document.getElementById('ck-util');
+    utilEl.classList.remove('dash-skeleton');
+    utilEl.textContent = teamWeek.rate === null ? '—' : pct(teamWeek.rate);
+    document.getElementById('ck-util-box').classList.toggle('warn', teamWeek.rate !== null && teamWeek.rate < 0.75);
 
     // KPIs
     let hours = 0; let field = 0; let away = 0; let miss = 0;
@@ -729,6 +751,7 @@
       if (o && !m.merge) th.append(mk('div', '', `미배정 ${o}건`));
       hr.append(th);
     });
+    hr.append(mk('th', 'wk', '주간 가동률'));
     thead.append(hr);
 
     const tbody = mk('tbody');
@@ -747,6 +770,8 @@
           const st = STATUS[c.status];
           if (st) { const s = mk('span', 'tm-st', st[0]); s.style.color = st[1] === null ? 'var(--color-warn)' : dash.colors[st[1]]; td.append(s); }
           td.append(mk('span', 'tm-h', f1(c.total) + 'h'));
+          const u = util(n, m);
+          if (u.rate !== null) td.append(mk('span', 'tm-rate ' + rateCls(u.rate), pct(u.rate) + '%'));
           const kinds = TYPES.filter(([k]) => c[k] > 0);
           if (c.status === 'office' || c.status === 'mixed' || kinds.length > 1) {
             const chips = mk('div', 'tm-chips');
@@ -767,12 +792,25 @@
         td.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } });
         tr.append(td);
       });
+      const wu = weekOf.get(n);
+      const wtd = mk('td', 'wk');
+      if (wu.rate !== null) {
+        wtd.append(mk('b', rateCls(wu.rate), pct(wu.rate) + '%'), mk('span', 'tm-h', `${f1(Math.round(wu.work * 10) / 10)} / ${f1(wu.avail)}h`));
+        const bar = mk('span', 'tm-hbar'); bar.setAttribute('aria-hidden', 'true');
+        const fill = mk('i'); fill.style.width = Math.min(100, (wu.rate / 1.5) * 100) + '%';
+        fill.style.background = wu.rate > 1.25 ? 'var(--cds-chart-status-critical)' : wu.rate < 0.75 ? 'var(--color-warn)' : dash.colors[0];
+        const tick = mk('b'); tick.style.left = (100 / 1.5) + '%';
+        bar.append(fill, tick);
+        wtd.append(bar);
+      } else wtd.append(mk('span', 'tm-h', '—'));
+      tr.append(wtd);
       tbody.append(tr);
     });
     if (meta.some((m) => orphan(m.d).length)) {
       const tr = mk('tr', 'unrow');
       tr.append(mk('td', 'who', '미배정'));
       meta.forEach((m) => { const td = mk('td', m.off ? 'off' : ''); const o = orphan(m.d); if (o.length && !m.merge) td.append(taskChips(o)); tr.append(td); });
+      tr.append(mk('td', 'wk'));
       tbody.append(tr);
     }
 
@@ -784,11 +822,16 @@
         let sum = 0; const cnt = { office: 0, field: 0, vacation: 0, education: 0 };
         CAL_MEMBERS.forEach((n) => { const c = cellMap.get(n + '|' + m.d); if (c) { sum += c.total; cnt[c.status === 'mixed' ? 'office' : c.status] += 1; } });
         if (sum > 0) td.append(mk('b', '', f1(Math.round(sum * 10) / 10) + 'h'));
+        const du = sumUtil(CAL_MEMBERS.map((n) => util(n, m)));
+        if (du.rate !== null) td.append(mk('span', 'tm-rate ' + rateCls(du.rate), '가동률 ' + pct(du.rate) + '%'), mk('br'));
         const parts = [['사무실', cnt.office], ['감리', cnt.field], ['휴가', cnt.vacation], ['교육', cnt.education]].filter(([, v]) => v).map(([k, v]) => k + ' ' + v);
         if (parts.length) td.append(mk('span', '', parts.join(' · ')));
       }
       fr.append(td);
     });
+    const twk = mk('td', 'wk');
+    if (teamWeek.rate !== null) twk.append(mk('b', rateCls(teamWeek.rate), '팀 ' + pct(teamWeek.rate) + '%'), mk('span', '', `${f1(Math.round(teamWeek.work * 10) / 10)} / ${f1(teamWeek.avail)}h`));
+    fr.append(twk);
     tfoot.append(fr);
     table.append(thead, tbody, tfoot);
     wrap.replaceChildren(table);

@@ -133,6 +133,7 @@ main{max-width:1280px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) m
 
   <section class="tm-panel" id="calendar" role="tabpanel" aria-labelledby="tab-calendar" hidden>
     <div class="tm-kpis">
+      <div class="tm-kpi" id="ck-util-box"><span class="l">팀 주간 가동률</span><span class="v"><span class="dash-skeleton" id="ck-util">—</span><span class="u">%</span></span></div>
       <div class="tm-kpi"><span class="l">이번 주 팀 투입</span><span class="v"><span class="dash-skeleton" id="ck-hours">—</span><span class="u">h</span></span></div>
       <div class="tm-kpi"><span class="l">이번 주 제안 마감</span><span class="v"><span class="dash-skeleton" id="ck-due">—</span><span class="u">건</span></span></div>
       <div class="tm-kpi" id="ck-un-box"><span class="l">그중 미배정·담당 확인 필요</span><span class="v"><span class="dash-skeleton" id="ck-un">—</span><span class="u">건</span></span></div>
@@ -150,7 +151,7 @@ main{max-width:1280px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) m
           <button class="tm-btn" id="cal-today" type="button">이번 주</button>
         </div>
       </div>
-      <p class="tm-note">감리·휴가·교육이 하루 8시간이면 그 상태로, 다른 업무와 섞이면 복합으로 표시. 칸 아래 막대는 작업배정 시트의 제안 마감(앞 이름이 정담당). 칸을 누르면 그날 기록을 봅니다</p>
+      <p class="tm-note">감리·휴가·교육이 하루 8시간이면 그 상태로, 다른 업무와 섞이면 복합으로 표시. 칸 아래 막대는 작업배정 시트의 제안 마감(앞 이름이 정담당). 칸을 누르면 그날 기록을 봅니다. 가동률 = 휴가를 뺀 업무시간 ÷ 기준시간(공휴일 아닌 평일 8h, 휴가시간 차감). 이번 주는 오늘까지(오늘은 기록이 있을 때만), 미입력 평일은 0시간으로 셉니다</p>
       <div class="tm-legend" id="cal-legend"></div>
       <div class="tm-calhost" id="cal-host">
         <div class="tm-calwrap" id="cal-wrap" data-source="day_cells"></div>
