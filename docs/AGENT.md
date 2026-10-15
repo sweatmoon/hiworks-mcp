@@ -18,6 +18,14 @@ claude mcp add --transport http hiworks-remote https://<your-app>.up.railway.app
 claude mcp add hiworks -e HIWORKS_USERNAME=... -e HIWORKS_PASSWORD=... -- npx -y hiworks-mail-mcp@latest
 ```
 
+## 1-1. Claude Code 클라우드 환경에서 쓰기
+
+저장소의 `.mcp.json` 이 원격 서버를 프로젝트 MCP 로 선언한다 (토큰은 `HIWORKS_MCP_TOKEN` 환경변수에서 읽음). 클라우드 환경 설정(세션 제목 표시줄의 환경 메뉴 → Edit)에서 두 가지를 넣는다.
+1. Network access → Allowed domains 에 `hiworks-mcp-production.up.railway.app` 추가 (패키지 관리자 허용은 켠 채로).
+2. Network secrets(또는 환경변수)에 `HIWORKS_MCP_TOKEN` = Railway 의 `MCP_AUTH_TOKEN` 값.
+
+새 세션을 열면 `hiworks-remote` 서버와 `work-manager` 스킬이 자동으로 잡힌다. 예약 실행(루틴)에 브리핑 프롬프트를 걸면 아침마다 자동으로 돈다.
+
 ## 2. 스킬 설치
 
 이 저장소의 `.claude/skills/work-manager/SKILL.md` 가 에이전트 지침이다. 이 저장소 안에서 Claude Code 를 열면 자동으로 쓸 수 있고, 다른 프로젝트에서도 쓰려면 개인 스킬 폴더로 복사한다.
