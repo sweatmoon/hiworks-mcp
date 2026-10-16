@@ -1,0 +1,20 @@
+# Mail Worker 이미지 (Playwright + Chromium 포함). SENT_SYNC_MODE=webmail 을 쓸 때만 필요하다.
+# 가져오기(import) 방식만 쓴다면 공용 Dockerfile 로 충분하다.
+FROM mcr.microsoft.com/playwright:v1.64.1-noble AS build
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --ignore-scripts
+COPY tsconfig.json drizzle.config.ts ./
+COPY src ./src
+COPY drizzle ./drizzle
+RUN npm run build && npm prune --omit=dev
+
+FROM mcr.microsoft.com/playwright:v1.64.1-noble
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/build ./build
+COPY --from=build /app/drizzle ./drizzle
+COPY package.json ./
+EXPOSE 3000
+CMD ["node", "build/worker/main.js"]

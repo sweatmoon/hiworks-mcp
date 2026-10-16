@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
 yarn.lock
-package-lock.json
 
 # Build
 build/
@@ -27,4 +26,4 @@ yarn-error.log*
 
 # System Files
 .DS_Store
-Thumbs.db 
+Thumbs.db webmail-probe/

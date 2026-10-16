@@ -1,0 +1,9 @@
+{
+  "name": "hiworks-dashboard",
+  "version": "0.1.0",
+  "description": "하이웍스 메일 업무 대시보드: 동기화 상태, 지연·오늘 마감·임박 할 일, 새 요청 메일을 패널로 보여준다",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "sweatmoon"
+  }
+}

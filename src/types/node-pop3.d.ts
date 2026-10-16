@@ -3,19 +3,28 @@ declare module 'node-pop3' {
     user: string;
     password: string;
     host: string;
-    port: number;
-    tls: boolean;
+    port?: number;
+    tls?: boolean;
     timeout?: number;
+    tlsOptions?: import('tls').ConnectionOptions;
+    servername?: string;
   }
 
-  export default class Pop3Command {
+  import { EventEmitter } from 'events';
+
+  export default class Pop3Command extends EventEmitter {
     constructor(config: Pop3Config);
-    STAT(): Promise<[number, number]>;
-    LIST(): Promise<[number, string][]>;
-    RETR(index: number): Promise<string>;
-    QUIT(): Promise<void>;
-    UIDL(): Promise<[string, string][]>;
-    UIDL(msgNum: string | number): Promise<[string, string][]>;
-    TOP(msgNum: number, n: number): Promise<string>;
+    /** "+OK" 뒤의 정보 문자열. 예: "100 102400" */
+    STAT(): Promise<string>;
+    LIST(): Promise<string[][]>;
+    LIST(msgNum: string | number): Promise<string[]>;
+    RETR(msgNum: number | string): Promise<string>;
+    DELE(msgNum: number | string): Promise<string>;
+    RSET(): Promise<string>;
+    NOOP(): Promise<void>;
+    QUIT(): Promise<string>;
+    UIDL(): Promise<string[][]>;
+    UIDL(msgNum: string | number): Promise<string[]>;
+    TOP(msgNum: number | string, numLines?: number): Promise<string>;
   }
-} 
+}

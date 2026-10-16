@@ -1,7 +1,7 @@
 {
   "name": "hiworks-mail-mcp",
-  "version": "1.0.12",
-  "description": "하이웍스 메일 시스템과 연동하여 메일 조회 및 전송을 할 수 있는 MCP 서버",
+  "version": "2.0.0",
+  "description": "하이웍스 메일을 PostgreSQL 에 동기화하고 검색·통계·AI 업무일지를 제공하는 MCP 서버 (stdio 로컬 + Streamable HTTP 원격)",
   "main": "build/index.js",
   "bin": {
     "hiworks-mail-mcp": "./build/index.js"
@@ -9,13 +9,24 @@
   "type": "module",
   "files": [
     "build",
-    "README.md"
+    "drizzle",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node build/index.js",
     "dev": "tsc -w",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "start": "node build/index.js",
+    "start:server": "node build/remote/server.js",
+    "start:worker": "node build/worker/main.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node build/scripts/migrate.js",
+    "import": "node build/scripts/import-file.js",
+    "webmail:probe": "node build/scripts/webmail-probe.js",
+    "test": "npm run build && node test/e2e.mjs && node --test --test-timeout=60000 test/remote.test.mjs",
+    "test:local": "npm run build && node test/e2e.mjs",
+    "test:remote": "npm run build && node --test --test-timeout=60000 test/remote.test.mjs"
   },
   "keywords": [
     "hiworks",
@@ -23,21 +34,35 @@
     "mcp",
     "pop3",
     "smtp",
-    "cursor"
+    "cursor",
+    "hiworks-mail",
+    "automation",
+    "claude"
   ],
   "author": "Beyless AI <dev@beyless.com>",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.2",
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "drizzle-orm": "^0.45.4",
+    "fflate": "^0.8.3",
     "mailparser": "^3.7.2",
     "node-pop3": "^0.9.1",
     "nodemailer": "^6.10.1",
+    "pg": "^8.23.1",
+    "yauzl": "^3.4.0",
     "zod": "^3.24.3"
   },
   "devDependencies": {
     "@types/mailparser": "^3.4.5",
     "@types/node": "^20.11.30",
     "@types/nodemailer": "^6.4.17",
+    "@types/pg": "^8.23.1",
+    "@types/yauzl": "^3.4.0",
+    "drizzle-kit": "^0.31.11",
     "typescript": "^5.4.3"
+  },
+  "optionalDependencies": {
+    "playwright": "1.64.1"
   }
 }
