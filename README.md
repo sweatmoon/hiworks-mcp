@@ -57,6 +57,8 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 
 ## 빠른 시작 (원격)
 
+> 팀원이 각자 자기 메일함으로 쓰려면 [docs/TEAM_SETUP.md](docs/TEAM_SETUP.md) 를 따릅니다. 서버 하나는 메일함 하나 전용이라, 서버 주소·토큰을 다른 사람과 나눠 쓰지 않습니다.
+
 1. [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) 대로 PostgreSQL, mcp-server, mail-worker 를 만들고 [.env.example](.env.example) 의 변수를 설정합니다.
 2. 하이웍스 웹메일 **메일 > 환경설정 > 기본 설정** 에서 POP3/SMTP 사용을 켭니다.
 3. 보낸메일 과거분은 **편지함 백업** 파일을 `/import?direction=sent` 로 올립니다. 이후분은 발송 시 자신을 숨은참조에 넣으면 자동 수집됩니다.
