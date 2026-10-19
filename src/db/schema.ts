@@ -36,6 +36,8 @@ export const emails = pgTable(
   'emails',
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
+    /** 메일함 계정 키 (main = 기본 계정, 그 밖은 ACCOUNT_<KEY>_* 환경변수) */
+    account: text('account').notNull().default('main'),
     /** Message-ID 헤더 (꺾쇠 제거, 소문자). 없을 수 있다 */
     messageId: text('message_id'),
     /**
@@ -74,12 +76,12 @@ export const emails = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('emails_dedup_key_uq').on(t.dedupKey),
-    uniqueIndex('emails_source_uid_uq')
-      .on(t.source, t.sourceUid)
+    uniqueIndex('emails_account_dedup_key_uq').on(t.account, t.dedupKey),
+    uniqueIndex('emails_account_source_uid_uq')
+      .on(t.account, t.source, t.sourceUid)
       .where(sql`${t.sourceUid} is not null`),
     index('emails_message_id_idx').on(t.messageId),
-    index('emails_direction_sent_at_idx').on(t.direction, t.sentAt),
+    index('emails_account_direction_sent_at_idx').on(t.account, t.direction, t.sentAt),
     index('emails_sender_email_idx').on(t.senderEmail),
     index('emails_thread_key_idx').on(t.threadKey),
     index('emails_project_idx').on(t.projectName),
@@ -107,8 +109,9 @@ export const emailAttachments = pgTable(
 
 export const emailSyncState = pgTable('email_sync_state', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
+  account: text('account').notNull().default('main'),
   /** pop3 | import | webmail */
-  source: text('source').notNull().unique(),
+  source: text('source').notNull(),
   lastSyncAt: timestamp('last_sync_at', { withTimezone: true }),
   lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
   lastUid: text('last_uid'),
@@ -119,12 +122,13 @@ export const emailSyncState = pgTable('email_sync_state', {
   nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
   stats: jsonb('stats').$type<Record<string, unknown>>().notNull().default({}),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [uniqueIndex('email_sync_state_account_source_uq').on(t.account, t.source)]);
 
 export const syncRuns = pgTable(
   'sync_runs',
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
+    account: text('account').notNull().default('main'),
     source: text('source').notNull(),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -134,13 +138,14 @@ export const syncRuns = pgTable(
     errorMessage: text('error_message'),
     details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
   },
-  (t) => [index('sync_runs_source_started_idx').on(t.source, t.startedAt)]
+  (t) => [index('sync_runs_account_source_started_idx').on(t.account, t.source, t.startedAt)]
 );
 
 export const workActivities = pgTable(
   'work_activities',
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
+    account: text('account').notNull().default('main'),
     /** 대표 근거 메일 */
     emailId: bigint('email_id', { mode: 'number' }).references(() => emails.id, { onDelete: 'set null' }),
     activityDate: date('activity_date').notNull(),
@@ -158,12 +163,13 @@ export const workActivities = pgTable(
     extractor: text('extractor').notNull().default('llm'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('work_activities_date_idx').on(t.activityDate), index('work_activities_project_idx').on(t.projectName)]
+  (t) => [index('work_activities_account_date_idx').on(t.account, t.activityDate), index('work_activities_project_idx').on(t.projectName)]
 );
 
 export const dailyWorklogs = pgTable('daily_worklogs', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
-  workDate: date('work_date').notNull().unique(),
+  account: text('account').notNull().default('main'),
+  workDate: date('work_date').notNull(),
   /** Markdown */
   content: text('content').notNull(),
   /** 구조화 JSON (활동 목록, 요청사항, 확인 필요 항목) */
@@ -171,7 +177,7 @@ export const dailyWorklogs = pgTable('daily_worklogs', {
   model: text('model'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [uniqueIndex('daily_worklogs_account_work_date_uq').on(t.account, t.workDate)]);
 
 export type EmailRow = typeof emails.$inferSelect;
 export type NewEmailRow = typeof emails.$inferInsert;
@@ -186,6 +192,7 @@ export const tasks = pgTable(
   'tasks',
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
+    account: text('account').notNull().default('main'),
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     status: taskStatusEnum('status').notNull().default('todo'),
@@ -207,7 +214,7 @@ export const tasks = pgTable(
     completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (t) => [
-    index('tasks_status_due_idx').on(t.status, t.dueDate),
+    index('tasks_account_status_due_idx').on(t.account, t.status, t.dueDate),
     index('tasks_project_idx').on(t.projectName),
     index('tasks_source_email_idx').on(t.sourceEmailId),
     index('tasks_thread_key_idx').on(t.threadKey),

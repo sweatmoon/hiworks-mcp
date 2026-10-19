@@ -1,4 +1,5 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import { acct } from '../account.js';
 import type { Db } from '../db/client.js';
 import { dailyWorklogs, emails, workActivities, type DailyWorklogRow } from '../db/schema.js';
 import { formatKST } from '../utils/date.js';
@@ -85,7 +86,7 @@ export async function generateDailyWorklog(db: Db, workDate: string, opts: Extra
 
   let activities;
   if (opts.reuseActivities) {
-    activities = await db.select().from(workActivities).where(eq(workActivities.activityDate, workDate));
+    activities = await db.select().from(workActivities).where(and(eq(workActivities.account, acct()), eq(workActivities.activityDate, workDate)));
     extractor = activities[0]?.extractor ?? 'none';
   } else {
     const r = await extractWorkActivities(db, workDate, opts);
@@ -99,7 +100,7 @@ export async function generateDailyWorklog(db: Db, workDate: string, opts: Extra
   }
 
   const evidenceIds = Array.from(new Set(activities.flatMap((a) => a.evidenceEmailIds)));
-  const evidenceRows = evidenceIds.length ? await db.select().from(emails).where(inArray(emails.id, evidenceIds)) : [];
+  const evidenceRows = evidenceIds.length ? await db.select().from(emails).where(and(eq(emails.account, acct()), inArray(emails.id, evidenceIds))) : [];
   const byId = new Map(evidenceRows.map((e) => [e.id, e]));
 
   const groups = new Map<string, WorklogJson['projects'][number]['activities']>();
@@ -136,13 +137,13 @@ export async function generateDailyWorklog(db: Db, workDate: string, opts: Extra
   const now = new Date();
   const [worklog] = await db
     .insert(dailyWorklogs)
-    .values({ workDate, content: markdown, contentJson: json as unknown as Record<string, unknown>, model, createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({ target: dailyWorklogs.workDate, set: { content: markdown, contentJson: json as unknown as Record<string, unknown>, model, updatedAt: now } })
+    .values({ account: acct(), workDate, content: markdown, contentJson: json as unknown as Record<string, unknown>, model, createdAt: now, updatedAt: now })
+    .onConflictDoUpdate({ target: [dailyWorklogs.account, dailyWorklogs.workDate], set: { content: markdown, contentJson: json as unknown as Record<string, unknown>, model, updatedAt: now } })
     .returning();
   return { worklog, json, markdown };
 }
 
 export async function getWorklog(db: Db, workDate: string): Promise<DailyWorklogRow | null> {
-  const rows = await db.select().from(dailyWorklogs).where(eq(dailyWorklogs.workDate, workDate)).limit(1);
+  const rows = await db.select().from(dailyWorklogs).where(and(eq(dailyWorklogs.account, acct()), eq(dailyWorklogs.workDate, workDate))).limit(1);
   return rows[0] ?? null;
 }

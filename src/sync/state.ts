@@ -1,4 +1,5 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
+import { acct } from '../account.js';
 import type { Db } from '../db/client.js';
 import { emailSyncState, syncRuns } from '../db/schema.js';
 
@@ -18,16 +19,16 @@ export function backoffMs(failures: number, baseMs: number): number {
 }
 
 export async function getSyncState(db: Db, source: SyncSource) {
-  const rows = await db.select().from(emailSyncState).where(eq(emailSyncState.source, source)).limit(1);
+  const rows = await db.select().from(emailSyncState).where(and(eq(emailSyncState.account, acct()), eq(emailSyncState.source, source))).limit(1);
   return rows[0] ?? null;
 }
 
 export async function listSyncStates(db: Db) {
-  return db.select().from(emailSyncState).orderBy(emailSyncState.source);
+  return db.select().from(emailSyncState).where(eq(emailSyncState.account, acct())).orderBy(emailSyncState.source);
 }
 
 export async function recentRuns(db: Db, limit = 10) {
-  return db.select().from(syncRuns).orderBy(desc(syncRuns.startedAt)).limit(limit);
+  return db.select().from(syncRuns).where(eq(syncRuns.account, acct())).orderBy(desc(syncRuns.startedAt)).limit(limit);
 }
 
 /** 동기화 1회를 상태 테이블과 실행 기록에 반영하면서 실행한다. */
@@ -40,12 +41,12 @@ export async function trackRun(
   const started = new Date();
   await db
     .insert(emailSyncState)
-    .values({ source, status: 'running', lastSyncAt: started, updatedAt: started })
+    .values({ account: acct(), source, status: 'running', lastSyncAt: started, updatedAt: started })
     .onConflictDoUpdate({
-      target: emailSyncState.source,
+      target: [emailSyncState.account, emailSyncState.source],
       set: { status: 'running', lastSyncAt: started, updatedAt: started },
     });
-  const [run] = await db.insert(syncRuns).values({ source, startedAt: started, status: 'running' }).returning({ id: syncRuns.id });
+  const [run] = await db.insert(syncRuns).values({ account: acct(), source, startedAt: started, status: 'running' }).returning({ id: syncRuns.id });
 
   try {
     const outcome = await fn();
@@ -62,7 +63,7 @@ export async function trackRun(
         stats: { ...outcome.details, newCount: outcome.newCount, skippedCount: outcome.skippedCount },
         updatedAt: now,
       })
-      .where(eq(emailSyncState.source, source));
+      .where(and(eq(emailSyncState.account, acct()), eq(emailSyncState.source, source)));
     await db
       .update(syncRuns)
       .set({ finishedAt: now, status: 'ok', newCount: outcome.newCount, skippedCount: outcome.skippedCount, details: outcome.details ?? {} })
@@ -82,7 +83,7 @@ export async function trackRun(
         nextRetryAt: new Date(now.getTime() + backoffMs(failures, baseIntervalMs)),
         updatedAt: now,
       })
-      .where(eq(emailSyncState.source, source));
+      .where(and(eq(emailSyncState.account, acct()), eq(emailSyncState.source, source)));
     await db.update(syncRuns).set({ finishedAt: now, status: 'error', errorMessage: message.slice(0, 2000) }).where(eq(syncRuns.id, run.id));
     return { newCount: 0, skippedCount: 0, ok: false, error: message };
   }
@@ -97,15 +98,15 @@ export async function closeInterruptedRuns(db: Db): Promise<number> {
   const rows = await db
     .update(syncRuns)
     .set({ status: 'error', finishedAt: now, errorMessage: '프로세스 재시작으로 중단됨 (다음 주기에 이어서 진행)' })
-    .where(eq(syncRuns.status, 'running'))
+    .where(and(eq(syncRuns.account, acct()), eq(syncRuns.status, 'running')))
     .returning({ id: syncRuns.id });
   if (rows.length) {
-    await db.update(emailSyncState).set({ status: 'idle', updatedAt: now }).where(eq(emailSyncState.status, 'running'));
+    await db.update(emailSyncState).set({ status: 'idle', updatedAt: now }).where(and(eq(emailSyncState.account, acct()), eq(emailSyncState.status, 'running')));
   }
   return rows.length;
 }
 
 /** 동기화 진행 중 심박. 잠금 보유자가 살아 있음을 알린다 (updated_at 갱신). */
 export async function heartbeat(db: Db, source: SyncSource): Promise<void> {
-  await db.update(emailSyncState).set({ updatedAt: new Date() }).where(eq(emailSyncState.source, source));
+  await db.update(emailSyncState).set({ updatedAt: new Date() }).where(and(eq(emailSyncState.account, acct()), eq(emailSyncState.source, source)));
 }

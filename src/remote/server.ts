@@ -13,7 +13,8 @@ import { closeDb, getDb } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
 import { importFile, type ImportProgress } from '../sync/import.js';
 import { listSyncStates } from '../sync/state.js';
-import { isAuthorized } from './auth.js';
+import { authorizedAccount } from './auth.js';
+import { MAIN_ACCOUNT, listAccounts, selfEmail, withAccount } from '../account.js';
 import { buildMcpServer } from './tools.js';
 
 /** 하이웍스 편지함 백업은 4GB 단위로 분할된다. */
@@ -60,12 +61,16 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<voi
 async function handleHealth(res: ServerResponse): Promise<void> {
   try {
     await getDb().execute(sql`select 1`);
-    const states = await listSyncStates(getDb());
+    // 공개 엔드포인트: 기본 계정의 동기화 상태와 계정 수만 알린다 (다른 계정의 이름·오류는 내보내지 않음)
+    const accounts = listAccounts();
+    const main = accounts.find((a) => a.key === MAIN_ACCOUNT);
+    const states = main ? await withAccount(main, () => listSyncStates(getDb())) : [];
     json(res, 200, {
       ok: true,
       service: 'mcp-server',
       version: PACKAGE_VERSION,
       db: 'ok',
+      accounts: accounts.length,
       sync: states.map((s) => ({ source: s.source, status: s.status, lastSuccessAt: s.lastSuccessAt, error: s.errorMessage })),
     });
   } catch (err) {
@@ -110,7 +115,7 @@ async function handleImport(req: IncomingMessage, res: ServerResponse, url: URL)
       const result = await importFile(getDb(), tmp, {
         filename,
         direction: direction as 'sent' | 'received' | undefined,
-        selfEmail: serviceConfig.selfEmail,
+        selfEmail: selfEmail(),
         onProgress: (p) => {
           last = p;
           if (p.files % 200 === 0 || Date.now() - lastSent > 5_000) {
@@ -145,16 +150,18 @@ export function createHttpServer(): http.Server {
       const route = segments[0];
       const pathToken = segments[1];
       if (route !== 'mcp' && route !== 'import') return json(res, 404, { error: 'not found' });
-      if (!isAuthorized(req, pathToken)) {
+      const account = authorizedAccount(req, pathToken);
+      if (!account) {
         res.setHeader('WWW-Authenticate', 'Bearer realm="hiworks-mcp"');
         return json(res, 401, { error: 'unauthorized' });
       }
+      // 이 요청 안의 모든 DB 접근은 토큰 주인의 메일함으로 한정된다
       if (route === 'import') {
         if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
-        return await handleImport(req, res, url);
+        return await withAccount(account, () => handleImport(req, res, url));
       }
       if (!['POST', 'GET', 'DELETE'].includes(req.method || '')) return json(res, 405, { error: 'method not allowed' });
-      await handleMcp(req, res);
+      await withAccount(account, () => handleMcp(req, res));
     } catch (err) {
       log('request error:', err);
       if (!res.headersSent) json(res, 500, { error: err instanceof Error ? err.message : 'internal error' });

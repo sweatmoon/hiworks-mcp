@@ -1,7 +1,8 @@
 import type { Db } from '../db/client.js';
-import { log, resolveCredentials, serviceConfig } from '../config.js';
+import { log, serviceConfig } from '../config.js';
+import { currentAccount } from '../account.js';
 import { syncInbox } from './inbox.js';
-import { SYNC_LOCK_KEY, breakStaleLock, withAdvisoryLock } from './lock.js';
+import { breakStaleLock, syncLockKey, withAdvisoryLock } from './lock.js';
 import { getSyncState, trackRun, type SyncSource } from './state.js';
 import { syncSentFromWebmail } from './sent/webmail.js';
 
@@ -16,14 +17,16 @@ export interface SyncSummary {
 }
 
 /**
- * 모든 수집원을 한 번 동기화한다. advisory lock 으로 Worker 와 MCP 서버의 동시 실행을 막는다.
+ * 지금 계정(withAccount 문맥)의 모든 수집원을 한 번 동기화한다. advisory lock 으로 Worker 와 MCP 서버의 동시 실행을 막는다.
  * 직전 실패로 백오프 중인 수집원은 force 가 아니면 건너뛴다.
  */
 export async function runSync(db: Db, opts: { sources?: SyncSource[]; force?: boolean } = {}): Promise<SyncSummary> {
   const sources: SyncSource[] = opts.sources ?? ['pop3', ...(serviceConfig.sentSyncMode === 'webmail' ? (['webmail'] as const) : [])];
   const baseIntervalMs = serviceConfig.syncIntervalMinutes * 60 * 1000;
 
-  const run = () => withAdvisoryLock(SYNC_LOCK_KEY, async () => {
+  const account = currentAccount();
+  const lockKey = syncLockKey();
+  const run = () => withAdvisoryLock(lockKey, async () => {
     const results: SyncSummary['results'] = [];
     for (const source of sources) {
       if (!opts.force) {
@@ -35,15 +38,15 @@ export async function runSync(db: Db, opts: { sources?: SyncSource[]; force?: bo
       }
       const outcome = await trackRun(db, source, baseIntervalMs, async () => {
         if (source === 'pop3') {
-          const creds = resolveCredentials();
-          return syncInbox(db, creds, { batchSize: serviceConfig.syncBatchSize, selfEmail: serviceConfig.selfEmail });
+          if (!account.username || !account.password) throw new Error(`계정 ${account.key}: 하이웍스 주소·비밀번호가 설정되지 않았습니다`);
+          return syncInbox(db, { username: account.username, password: account.password }, { batchSize: serviceConfig.syncBatchSize, selfEmail: account.username.toLowerCase() });
         }
         if (source === 'webmail') {
           return syncSentFromWebmail(db);
         }
         throw new Error(`자동 동기화를 지원하지 않는 수집원: ${source} (import 는 /import 또는 import_emails 로 올립니다)`);
       });
-      log(`sync ${source}:`, outcome.ok ? `+${outcome.newCount} (skip ${outcome.skippedCount})` : `error ${outcome.error}`);
+      log(`sync ${account.key}/${source}:`, outcome.ok ? `+${outcome.newCount} (skip ${outcome.skippedCount})` : `error ${outcome.error}`);
       const entry: SyncSummary['results'][number] = { source, ok: outcome.ok, newCount: outcome.newCount, skippedCount: outcome.skippedCount };
       const remaining = Number((outcome.details as Record<string, unknown> | undefined)?.['remaining'] ?? 0);
       if (remaining > 0) entry.remaining = remaining;
@@ -60,7 +63,7 @@ export async function runSync(db: Db, opts: { sources?: SyncSource[]; force?: bo
     const states = await Promise.all(sources.map((s) => getSyncState(db, s)));
     const newest = states.reduce<number>((m, s) => Math.max(m, s?.updatedAt?.getTime() ?? 0), 0);
     if (newest > 0 && Date.now() - newest > STALE_LOCK_MS) {
-      if (await breakStaleLock(SYNC_LOCK_KEY)) {
+      if (await breakStaleLock(lockKey)) {
         brokeStaleLock = true;
         log('stale sync lock broken');
         // 종료 신호가 반영돼 잠금이 풀릴 때까지 잠시 기다리며 재시도

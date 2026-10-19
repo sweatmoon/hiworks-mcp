@@ -3,6 +3,7 @@ import type { Db } from '../db/client.js';
 import { emails, tasks, type EmailRow, type TaskRow } from '../db/schema.js';
 import { getEmailById, getThread, toSummary, type EmailDetail, type EmailSummary } from '../search/query.js';
 import { formatKST, parseDateInput } from '../utils/date.js';
+import { acct } from '../account.js';
 
 export type TaskStatus = TaskRow['status'];
 export type TaskPriority = TaskRow['priority'];
@@ -72,7 +73,7 @@ export function toTaskView(row: TaskRow, sourceEmail?: EmailRow | null, today = 
 
 async function attachSourceEmails(db: Db, rows: TaskRow[]): Promise<TaskView[]> {
   const ids = Array.from(new Set(rows.map((r) => r.sourceEmailId).filter((id): id is number => id !== null)));
-  const found = ids.length ? await db.select().from(emails).where(inArray(emails.id, ids)) : [];
+  const found = ids.length ? await db.select().from(emails).where(and(eq(emails.account, acct()), inArray(emails.id, ids))) : [];
   const byId = new Map(found.map((e) => [e.id, e]));
   const today = todayKST();
   return rows.map((r) => toTaskView(r, r.sourceEmailId ? byId.get(r.sourceEmailId) ?? null : null, today));
@@ -103,13 +104,14 @@ function normalizeDue(due: string | null | undefined): string | null {
 export async function createTask(db: Db, input: CreateTaskInput): Promise<TaskView> {
   let source: EmailRow | null = null;
   if (input.sourceEmailId) {
-    const rows = await db.select().from(emails).where(eq(emails.id, input.sourceEmailId)).limit(1);
+    const rows = await db.select().from(emails).where(and(eq(emails.account, acct()), eq(emails.id, input.sourceEmailId))).limit(1);
     source = rows[0] ?? null;
     if (!source) throw new Error(`근거 메일을 찾을 수 없습니다: ${input.sourceEmailId}`);
   }
   const [row] = await db
     .insert(tasks)
     .values({
+      account: acct(),
       title: input.title.trim(),
       description: input.description ?? '',
       status: input.status ?? 'todo',
@@ -142,7 +144,7 @@ export interface UpdateTaskInput {
 }
 
 export async function updateTask(db: Db, id: number, input: UpdateTaskInput): Promise<TaskView | null> {
-  const existing = (await db.select().from(tasks).where(eq(tasks.id, id)).limit(1))[0];
+  const existing = (await db.select().from(tasks).where(and(eq(tasks.account, acct()), eq(tasks.id, id))).limit(1))[0];
   if (!existing) return null;
   const set: Partial<typeof tasks.$inferInsert> = { updatedAt: new Date() };
   if (input.title !== undefined) set.title = input.title.trim();
@@ -151,7 +153,13 @@ export async function updateTask(db: Db, id: number, input: UpdateTaskInput): Pr
   if (input.dueDate !== undefined) set.dueDate = normalizeDue(input.dueDate);
   if (input.projectName !== undefined) set.projectName = input.projectName;
   if (input.requester !== undefined) set.requester = input.requester;
-  if (input.sourceEmailId !== undefined) set.sourceEmailId = input.sourceEmailId;
+  if (input.sourceEmailId !== undefined) {
+    if (input.sourceEmailId !== null) {
+      const found = await db.select({ id: emails.id }).from(emails).where(and(eq(emails.account, acct()), eq(emails.id, input.sourceEmailId))).limit(1);
+      if (!found.length) throw new Error(`근거 메일을 찾을 수 없습니다: ${input.sourceEmailId}`);
+    }
+    set.sourceEmailId = input.sourceEmailId;
+  }
   if (input.notes !== undefined) set.notes = input.notes;
   if (input.appendNote) {
     const stamp = formatKST(new Date()).slice(0, 16).replace('T', ' ');
@@ -163,7 +171,7 @@ export async function updateTask(db: Db, id: number, input: UpdateTaskInput): Pr
     else if (input.status === 'cancelled') set.completedAt = existing.completedAt ?? new Date();
     else set.completedAt = null;
   }
-  const [row] = await db.update(tasks).set(set).where(eq(tasks.id, id)).returning();
+  const [row] = await db.update(tasks).set(set).where(and(eq(tasks.account, acct()), eq(tasks.id, id))).returning();
   return (await attachSourceEmails(db, [row]))[0];
 }
 
@@ -188,7 +196,7 @@ const PRIORITY_ORDER = sql`case ${tasks.priority} when 'urgent' then 0 when 'hig
 export async function listTasks(db: Db, p: ListTasksParams = {}): Promise<{ tasks: TaskView[]; total: number; limit: number; offset: number }> {
   const limit = Math.min(Math.max(p.limit ?? 50, 1), 200);
   const offset = Math.max(p.offset ?? 0, 0);
-  const conds: SQL[] = [];
+  const conds: SQL[] = [eq(tasks.account, acct())];
   const status = p.status && p.status.length ? p.status : (['todo', 'doing', 'waiting'] as TaskStatus[]);
   conds.push(inArray(tasks.status, status));
   if (p.project) conds.push(eq(tasks.projectName, p.project));
@@ -221,7 +229,7 @@ export async function listTasks(db: Db, p: ListTasksParams = {}): Promise<{ task
 }
 
 export async function getTask(db: Db, id: number): Promise<{ task: TaskView; sourceEmail: EmailDetail | null; thread: EmailSummary[] } | null> {
-  const row = (await db.select().from(tasks).where(eq(tasks.id, id)).limit(1))[0];
+  const row = (await db.select().from(tasks).where(and(eq(tasks.account, acct()), eq(tasks.id, id))).limit(1))[0];
   if (!row) return null;
   const sourceEmail = row.sourceEmailId ? await getEmailById(db, row.sourceEmailId, { maxLength: 4000 }) : null;
   const thread = row.threadKey ? await getThread(db, row.threadKey) : [];
@@ -259,12 +267,13 @@ export async function findActionableEmails(
     .select({
       row: emails,
       // 주의: SELECT 절에서 drizzle 은 컬럼을 테이블명 없이 렌더링하므로 서브쿼리 안의 외부 참조는 명시적으로 적는다.
-      repliedAfter: sql<boolean>`exists (select 1 from ${emails} s where s.direction = 'sent' and s.thread_key = ${outerThreadKey} and s.thread_key <> '' and coalesce(s.sent_at, s.created_at) >= ${outerDate})`,
-      linkedTaskIds: sql<number[]>`coalesce((select array_agg(t.id order by t.id) from ${tasks} t where t.source_email_id = ${outerId} or (t.thread_key = ${outerThreadKey} and ${outerThreadKey} <> '' and t.status not in ('done','cancelled'))), '{}')`,
+      repliedAfter: sql<boolean>`exists (select 1 from ${emails} s where s.account = "emails"."account" and s.direction = 'sent' and s.thread_key = ${outerThreadKey} and s.thread_key <> '' and coalesce(s.sent_at, s.created_at) >= ${outerDate})`,
+      linkedTaskIds: sql<number[]>`coalesce((select array_agg(t.id order by t.id) from ${tasks} t where t.account = "emails"."account" and (t.source_email_id = ${outerId} or (t.thread_key = ${outerThreadKey} and ${outerThreadKey} <> '' and t.status not in ('done','cancelled')))), '{}')`,
     })
     .from(emails)
     .where(
       and(
+        eq(emails.account, acct()),
         eq(emails.direction, 'received'),
         gte(dateCol, since),
         lte(dateCol, before),
@@ -325,7 +334,7 @@ export async function buildDailyBrief(db: Db, p: { date?: string; soonDays?: num
   const completedRows = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.status, 'done'), gte(tasks.completedAt, parseDateInput(since))))
+    .where(and(eq(tasks.account, acct()), eq(tasks.status, 'done'), gte(tasks.completedAt, parseDateInput(since))))
     .orderBy(desc(tasks.completedAt))
     .limit(20);
   const { listSyncStates } = await import('../sync/state.js');
@@ -360,7 +369,7 @@ export async function getReplyContext(db: Db, p: { taskId?: number; emailId?: nu
   let task: TaskRow | null = null;
   let emailId = p.emailId ?? null;
   if (p.taskId) {
-    task = (await db.select().from(tasks).where(eq(tasks.id, p.taskId)).limit(1))[0] ?? null;
+    task = (await db.select().from(tasks).where(and(eq(tasks.account, acct()), eq(tasks.id, p.taskId))).limit(1))[0] ?? null;
     if (!task) return null;
     emailId = emailId ?? task.sourceEmailId;
   }
@@ -372,7 +381,7 @@ export async function getReplyContext(db: Db, p: { taskId?: number; emailId?: nu
     ? await db
         .select()
         .from(emails)
-        .where(and(eq(emails.direction, 'sent'), sql`${email.senderEmail} = any(${emails.recipientEmails})`))
+        .where(and(eq(emails.account, acct()), eq(emails.direction, 'sent'), sql`${email.senderEmail} = any(${emails.recipientEmails})`))
         .orderBy(desc(emails.sentAt))
         .limit(3)
     : [];
@@ -388,7 +397,7 @@ export async function getReplyContext(db: Db, p: { taskId?: number; emailId?: nu
 }
 
 export async function taskSummaryCounts(db: Db): Promise<Record<string, number>> {
-  const rows = await db.select({ status: tasks.status, n: sql<number>`count(*)`.mapWith(Number) }).from(tasks).groupBy(tasks.status);
+  const rows = await db.select({ status: tasks.status, n: sql<number>`count(*)`.mapWith(Number) }).from(tasks).where(eq(tasks.account, acct())).groupBy(tasks.status);
   const out: Record<string, number> = { todo: 0, doing: 0, waiting: 0, done: 0, cancelled: 0 };
   for (const r of rows) out[r.status] = r.n;
   return out;
@@ -433,7 +442,7 @@ export async function buildDailyActivity(db: Db, p: { date?: string } = {}): Pro
   const rows = await db
     .select()
     .from(emails)
-    .where(and(gte(dateCol, since), lte(dateCol, before)))
+    .where(and(eq(emails.account, acct()), gte(dateCol, since), lte(dateCol, before)))
     .orderBy(asc(dateCol));
 
   const received = rows.filter((r) => r.direction === 'received');
@@ -464,8 +473,8 @@ export async function buildDailyActivity(db: Db, p: { date?: string } = {}): Pro
   const noise = new RegExp(NOISE_SENDER, 'i');
   const otherReceivedSubjects = received.filter((r) => !requestIds.has(r.id) && !noise.test(r.senderEmail)).map((r) => r.subject).slice(0, 50);
 
-  const completedRows = await db.select().from(tasks).where(and(gte(tasks.completedAt, since), lte(tasks.completedAt, before))).orderBy(asc(tasks.completedAt));
-  const createdRows = await db.select().from(tasks).where(and(gte(tasks.createdAt, since), lte(tasks.createdAt, before))).orderBy(asc(tasks.createdAt));
+  const completedRows = await db.select().from(tasks).where(and(eq(tasks.account, acct()), gte(tasks.completedAt, since), lte(tasks.completedAt, before))).orderBy(asc(tasks.completedAt));
+  const createdRows = await db.select().from(tasks).where(and(eq(tasks.account, acct()), gte(tasks.createdAt, since), lte(tasks.createdAt, before))).orderBy(asc(tasks.createdAt));
 
   return {
     date,

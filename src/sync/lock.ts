@@ -1,6 +1,14 @@
 import { getPool } from '../db/client.js';
 
+import { acct } from '../account.js';
+
 export const SYNC_LOCK_KEY = 'hiworks-mail-sync';
+
+/** 지금 계정의 동기화 잠금 키. 계정마다 따로 잠가 서로 기다리지 않게 한다 (main 은 예전 키 그대로). */
+export function syncLockKey(): string {
+  const key = acct();
+  return key === 'main' ? SYNC_LOCK_KEY : `${SYNC_LOCK_KEY}:${key}`;
+}
 
 /**
  * PostgreSQL 세션 advisory lock 으로 같은 작업의 중복 실행을 막는다.

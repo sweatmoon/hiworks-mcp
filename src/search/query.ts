@@ -3,6 +3,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client.js';
 import { emailAttachments, emails, type EmailRow } from '../db/schema.js';
 import { formatKST, parseDateInput } from '../utils/date.js';
+import { acct } from '../account.js';
 
 export interface SearchParams {
   query?: string;
@@ -66,7 +67,8 @@ export function toSummary(row: EmailRow, snippetLength = 200): EmailSummary {
 
 /** 검색 조건을 WHERE 절로 변환한다. 한글은 trigram ILIKE 부분 일치, 공백으로 나뉜 단어는 AND. */
 export function buildWhere(p: SearchParams): SQL | undefined {
-  const conds: SQL[] = [];
+  // 언제나 지금 계정의 메일만
+  const conds: SQL[] = [eq(emails.account, acct())];
   if (p.direction) conds.push(eq(emails.direction, p.direction));
   if (p.from) conds.push(sql`(${ilike(emails.sender, p.from)} OR ${ilike(emails.senderEmail, p.from)})`);
   if (p.to) conds.push(sql`exists (select 1 from unnest(${emails.recipientEmails}) r where r ILIKE ${'%' + p.to.toLowerCase() + '%'})`);
@@ -125,7 +127,7 @@ export interface EmailDetail extends EmailSummary {
 }
 
 export async function getEmailById(db: Db, id: number, opts: { includeHtml?: boolean; maxLength?: number } = {}): Promise<EmailDetail | null> {
-  const rows = await db.select().from(emails).where(eq(emails.id, id)).limit(1);
+  const rows = await db.select().from(emails).where(and(eq(emails.account, acct()), eq(emails.id, id))).limit(1);
   const row = rows[0];
   if (!row) return null;
   const atts = await db.select().from(emailAttachments).where(eq(emailAttachments.emailId, id));
@@ -151,7 +153,7 @@ export async function getThread(db: Db, threadKey: string, limit = 50): Promise<
   const rows = await db
     .select()
     .from(emails)
-    .where(eq(emails.threadKey, threadKey))
+    .where(and(eq(emails.account, acct()), eq(emails.threadKey, threadKey)))
     .orderBy(asc(sql`coalesce(${emails.sentAt}, ${emails.receivedAt}, ${emails.createdAt})`))
     .limit(limit);
   return rows.map((r) => toSummary(r));
