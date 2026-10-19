@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { count, sql } from 'drizzle-orm';
+import { count, eq, sql } from 'drizzle-orm';
 import { PACKAGE_NAME, PACKAGE_VERSION, serviceConfig } from '../config.js';
 import { getDb } from '../db/client.js';
 import { emails } from '../db/schema.js';
@@ -14,6 +14,7 @@ import { generateDailyWorklog, getWorklog } from '../worklog/generate.js';
 import { hasAnthropicCredentials } from '../worklog/llm.js';
 import { errorResult, jsonResult } from '../tools/common.js';
 import { formatKST } from '../utils/date.js';
+import { acct, selfEmail } from '../account.js';
 import { registerTaskTools } from './tools-tasks.js';
 
 const dateShape = {
@@ -146,7 +147,7 @@ export function buildMcpServer(): McpServer {
           before: before ?? todayKST(),
           granularity,
           topN,
-          selfEmail: serviceConfig.selfEmail,
+          selfEmail: selfEmail(),
         });
         return jsonResult({ success: true, ...stats });
       } catch (error) {
@@ -240,6 +241,7 @@ export function buildMcpServer(): McpServer {
         const counts = await db
           .select({ direction: emails.direction, count: count(), latest: sql<string | null>`max(coalesce(${emails.sentAt}, ${emails.receivedAt}))` })
           .from(emails)
+          .where(eq(emails.account, acct()))
           .groupBy(emails.direction);
         return jsonResult({
           success: true,
@@ -292,7 +294,7 @@ export function buildMcpServer(): McpServer {
       try {
         if (contentBase64.length > 20 * 1024 * 1024 * 1.4) throw new Error('base64 입력이 너무 큽니다. /import 엔드포인트를 사용하세요.');
         const buf = Buffer.from(contentBase64, 'base64');
-        const r = await importMessages(db, buf, { filename, direction, selfEmail: serviceConfig.selfEmail });
+        const r = await importMessages(db, buf, { filename, direction, selfEmail: selfEmail() });
         return jsonResult({ success: r.failed === 0 || r.newCount > 0, ...r });
       } catch (error) {
         return errorResult(error);
@@ -350,7 +352,7 @@ export function buildMcpServer(): McpServer {
     { title: '연결 확인', description: '서버 버전과 DB 연결 상태를 돌려줍니다.', inputSchema: {} },
     async () => {
       try {
-        const [row] = await db.select({ n: count() }).from(emails);
+        const [row] = await db.select({ n: count() }).from(emails).where(eq(emails.account, acct()));
         return jsonResult({ success: true, version: PACKAGE_VERSION, emails: row?.n ?? 0, time: formatKST(new Date()) });
       } catch (error) {
         return errorResult(error);

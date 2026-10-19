@@ -57,7 +57,7 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 
 ## 빠른 시작 (원격)
 
-> 팀원이 각자 자기 메일함으로 쓰려면 [docs/TEAM_SETUP.md](docs/TEAM_SETUP.md) 를 따릅니다. 서버 하나는 메일함 하나 전용이라, 서버 주소·토큰을 다른 사람과 나눠 쓰지 않습니다.
+> 서버 하나, DB 하나로 여러 사람의 메일함을 나눠 담습니다. 팀원 추가는 [docs/TEAM_SETUP.md](docs/TEAM_SETUP.md) 대로 Railway 변수 `ACCOUNT_<KEY>_USERNAME/PASSWORD/TOKEN` 만 넣으면 됩니다. 접속 토큰이 계정마다 달라 서로의 메일은 보이지 않습니다.
 
 1. [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) 대로 PostgreSQL, mcp-server, mail-worker 를 만들고 [.env.example](.env.example) 의 변수를 설정합니다.
 2. 하이웍스 웹메일 **메일 > 환경설정 > 기본 설정** 에서 POP3/SMTP 사용을 켭니다.
@@ -114,7 +114,8 @@ docs/                   계획, 검증 결과, 배포, 연결, 보낸메일 가�
 ## 보안
 - 자격증명·토큰은 환경변수로만 전달하고 로그에 남기지 않습니다.
 - 원격 서버는 `MCP_AUTH_TOKEN` 없이는 기동하지 않으며 모든 `/mcp`, `/import` 요청에 인증이 필요합니다.
-- 단일 개인 계정 전용입니다. `EMAIL_RETENTION_DAYS` 로 보관기간을 둘 수 있습니다.
+- 여러 계정을 중앙 관리합니다. 모든 데이터에 `account` 열이 붙고, 모든 조회는 접속 토큰의 계정으로 걸러집니다. 관리자는 Railway 변수와 DB 를 볼 수 있으므로 팀원 동의를 받고 추가합니다.
+- `EMAIL_RETENTION_DAYS` 로 보관기간을 둘 수 있습니다.
 
 ## 라이선스
 MIT. [LICENSE](./LICENSE)

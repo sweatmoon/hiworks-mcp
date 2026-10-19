@@ -8,7 +8,8 @@
  * CAPTCHA 나 2단계 인증이 나타나면 수집을 중단하고 오류로 기록한다. 우회하지 않는다.
  */
 import type { Db } from '../../db/client.js';
-import { log, resolveCredentials } from '../../config.js';
+import { log } from '../../config.js';
+import { currentAccount } from '../../account.js';
 import { importMessages } from '../import.js';
 import type { RunOutcome } from '../state.js';
 
@@ -73,7 +74,8 @@ async function loadPlaywright(): Promise<typeof import('playwright')> {
 
 export async function syncSentFromWebmail(db: Db, selectors: WebmailSelectors = webmailSelectorsFromEnv()): Promise<RunOutcome> {
   assertConfigured(selectors);
-  const creds = resolveCredentials();
+  const { username, password } = currentAccount();
+  const creds = { username, password };
   const { chromium } = await loadPlaywright();
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   let newCount = 0;

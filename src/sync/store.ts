@@ -5,6 +5,7 @@ import type { Db } from '../db/client.js';
 import { emailAttachments, emails, type NewEmailRow, type RecipientJson } from '../db/schema.js';
 import { projectRules, type ProjectRule } from '../config.js';
 import { normalizeMessageId, stripHtml } from '../utils/mail.js';
+import { acct } from '../account.js';
 
 export type Direction = 'sent' | 'received';
 
@@ -121,7 +122,8 @@ export interface InsertResult {
 /** 중복이면 건너뛰고(inserted=false), 새 메일이면 첨부 메타까지 저장한다. */
 export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<InsertResult> {
   return db.transaction(async (tx) => {
-    const rows = await tx.insert(emails).values(prepared.row).onConflictDoNothing().returning({ id: emails.id });
+    const account = acct();
+    const rows = await tx.insert(emails).values({ ...prepared.row, account }).onConflictDoNothing().returning({ id: emails.id });
     const id = rows[0]?.id;
     if (!id) {
       // 이미 존재: source_uid 가 비어 있던 행(예: 백업 가져오기)에 POP3 uid 를 보강한다.
@@ -129,7 +131,7 @@ export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<Inse
         const existing = await tx
           .select({ id: emails.id, sourceUid: emails.sourceUid })
           .from(emails)
-          .where(eq(emails.dedupKey, prepared.row.dedupKey))
+          .where(and(eq(emails.account, account), eq(emails.dedupKey, prepared.row.dedupKey)))
           .limit(1);
         const e = existing[0];
         if (e && !e.sourceUid) {
@@ -155,6 +157,6 @@ export async function knownSourceUids(db: Db, source: string, uids: string[]): P
   const rows = await db
     .select({ uid: emails.sourceUid })
     .from(emails)
-    .where(and(eq(emails.source, source), inArray(emails.sourceUid, uids)));
+    .where(and(eq(emails.account, acct()), eq(emails.source, source), inArray(emails.sourceUid, uids)));
   return new Set(rows.map((r) => r.uid).filter((u): u is string => Boolean(u)));
 }

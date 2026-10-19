@@ -2,6 +2,7 @@ import { and, asc, eq, gte, lte, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { emails, workActivities, type EmailRow, type WorkActivityRow } from '../db/schema.js';
 import { projectRules } from '../config.js';
+import { acct } from '../account.js';
 import { formatKST, parseDateInput } from '../utils/date.js';
 import { getWorklogLLM, type CompactEmail, type Extraction } from './llm.js';
 
@@ -36,7 +37,7 @@ export async function emailsForDate(db: Db, workDate: string): Promise<EmailRow[
   return db
     .select()
     .from(emails)
-    .where(and(gte(dateCol, since), lte(dateCol, before)))
+    .where(and(eq(emails.account, acct()), gte(dateCol, since), lte(dateCol, before)))
     .orderBy(asc(dateCol));
 }
 
@@ -121,6 +122,7 @@ export async function extractWorkActivities(db: Db, workDate: string, opts: Extr
     });
     const needsReview = evidence.length === 0 || a.confidence < 0.6 || mode === 'rules';
     return {
+      account: acct(),
       emailId: evidence[0] ?? null,
       activityDate: workDate,
       projectName: a.project_name,
@@ -135,7 +137,7 @@ export async function extractWorkActivities(db: Db, workDate: string, opts: Extr
   });
 
   const activities = await db.transaction(async (tx) => {
-    await tx.delete(workActivities).where(eq(workActivities.activityDate, workDate));
+    await tx.delete(workActivities).where(and(eq(workActivities.account, acct()), eq(workActivities.activityDate, workDate)));
     if (prepared.length === 0) return [] as WorkActivityRow[];
     return tx.insert(workActivities).values(prepared).returning();
   });

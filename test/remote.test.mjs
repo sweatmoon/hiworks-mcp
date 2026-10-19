@@ -19,6 +19,17 @@ process.env.HIWORKS_POP3_TLS = 'false';
 process.env.MCP_AUTH_TOKEN = 'test-token-0123456789abcdef';
 process.env.PROJECT_RULES = JSON.stringify([{ name: 'A사업', keywords: ['A사업', '견적'] }, { name: 'B사업', keywords: ['계약서'] }]);
 process.env.SYNC_INTERVAL_MINUTES = '10';
+// 중앙 관리: 두 번째 계정 (팀원 b). 토큰이 달라 서로의 메일함이 보이지 않아야 한다
+process.env.ACCOUNT_B_USERNAME = 'b@hiworks.com';
+process.env.ACCOUNT_B_PASSWORD = 'secret-b';
+process.env.ACCOUNT_B_TOKEN = 'token-b-0123456789abcdef';
+// 잘못 설정된 계정들은 건너뛴다
+process.env.ACCOUNT_SHORT_USERNAME = 'short@hiworks.com';
+process.env.ACCOUNT_SHORT_PASSWORD = 'x';
+process.env.ACCOUNT_SHORT_TOKEN = 'too-short';
+process.env.ACCOUNT_DUP_USERNAME = 'dup@hiworks.com';
+process.env.ACCOUNT_DUP_PASSWORD = 'x';
+process.env.ACCOUNT_DUP_TOKEN = 'token-b-0123456789abcdef';
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.ANTHROPIC_AUTH_TOKEN;
 
@@ -28,6 +39,12 @@ if (!process.env.DATABASE_URL) {
 }
 
 const { getDb, closeDb, getPool } = await import('../build/db/client.js');
+const { listAccounts, withAccount, MAIN_ACCOUNT } = await import('../build/account.js');
+const { syncLockKey } = await import('../build/sync/lock.js');
+const MAIN = listAccounts().find((a) => a.key === MAIN_ACCOUNT);
+const ACC_B = listAccounts().find((a) => a.key === 'b');
+/** 메일 데이터를 직접 다루는 테스트는 main 계정 문맥에서 돈다 */
+const mainTest = (name, fn) => test(name, () => withAccount(MAIN, fn));
 const { runMigrations } = await import('../build/db/migrate.js');
 const { importMessages, importFile, extractMessages, decodeEntryName } = await import('../build/sync/import.js');
 const { runSync } = await import('../build/sync/runner.js');
@@ -74,7 +91,7 @@ after(async () => {
   await closeDb();
 });
 
-test('import: zip of EML (sent backup), dedup, mbox', async () => {
+mainTest('import: zip of EML (sent backup), dedup, mbox', async () => {
   const zip = zipSync({ 'sent/s1.eml': strToU8(sentBackup[0]), 'sent/s2.eml': strToU8(sentBackup[1]), 'sent/s3.eml': strToU8(sentBackup[2]), 'readme.txt': strToU8('ignore me') });
   const r = await importMessages(db, Buffer.from(zip), { filename: 'sent-backup.zip', direction: 'sent' });
   assert.equal(r.newCount, 3);
@@ -120,7 +137,7 @@ test('import: zip of EML (sent backup), dedup, mbox', async () => {
   assert.equal(decodeEntryName(Buffer.from('유니코드.eml', 'utf8')), '유니코드.eml');
 });
 
-test('inbox sync: incremental, bcc-to-self as sent, uid backfill, lock', async () => {
+mainTest('inbox sync: incremental, bcc-to-self as sent, uid backfill, lock', async () => {
   // 백업으로 먼저 들어온 메일(m1@test 와 같은 Message-ID)이 POP3 에도 있으면 uid 만 보강된다
   const pre = await importMessages(db, Buffer.from(pop3Messages[0]), { direction: 'received' });
   assert.equal(pre.newCount, 1);
@@ -169,9 +186,10 @@ test('inbox sync: incremental, bcc-to-self as sent, uid backfill, lock', async (
   assert.ok(state.lastSuccessAt);
 });
 
-test('sync failure: error recorded, backoff, force', async () => {
-  process.env.HIWORKS_PASSWORD = 'wrong';
-  const failed = await runSync(db, { sources: ['pop3'] });
+mainTest('sync failure: error recorded, backoff, force', async () => {
+  // 비밀번호가 틀린 같은 계정 (문맥이 계정 정보를 들고 있다)
+  const wrong = { ...MAIN, password: 'wrong' };
+  const failed = await withAccount(wrong, () => runSync(db, { sources: ['pop3'] }));
   assert.equal(failed.results[0].ok, false);
   assert.match(failed.results[0].error, /Authentication/);
   let state = await getSyncState(db, 'pop3');
@@ -180,7 +198,6 @@ test('sync failure: error recorded, backoff, force', async () => {
   assert.ok(state.nextRetryAt.getTime() > Date.now());
   const skipped = await runSync(db, { sources: ['pop3'] });
   assert.match(skipped.results[0].skippedReason, /백오프/);
-  process.env.HIWORKS_PASSWORD = 'secret';
   const forced = await runSync(db, { sources: ['pop3'], force: true });
   assert.equal(forced.results[0].ok, true);
   state = await getSyncState(db, 'pop3');
@@ -189,7 +206,7 @@ test('sync failure: error recorded, backoff, force', async () => {
   assert.equal(state.nextRetryAt, null);
 });
 
-test('search: korean partial match, multi-term AND, filters, pagination, relevance', async () => {
+mainTest('search: korean partial match, multi-term AND, filters, pagination, relevance', async () => {
   const r1 = await searchEmails(db, { query: '견적' });
   assert.ok(r1.total >= 2, 'partial match on 견적서/견적서를');
   const r2 = await searchEmails(db, { query: '견적 9/5' });
@@ -216,7 +233,7 @@ test('search: korean partial match, multi-term AND, filters, pagination, relevan
   assert.equal(threadKeyOf('Re: RE: Fwd: 회의 일정 조율'), '회의 일정 조율');
 });
 
-test('statistics: totals, series, top counterparts, projects, pending requests', async () => {
+mainTest('statistics: totals, series, top counterparts, projects, pending requests', async () => {
   const s = await getStatistics(db, { since: '2025-09-01', before: '2025-09-30', granularity: 'day', selfEmail: SELF });
   assert.equal(s.totals.sent, 6);
   assert.equal(s.totals.received, 5);
@@ -236,7 +253,7 @@ test('statistics: totals, series, top counterparts, projects, pending requests',
   assert.equal(weekly.series.length, 1);
 });
 
-test('worklog: fake LLM evidence validation, rules mode, markdown/json, persistence', async () => {
+mainTest('worklog: fake LLM evidence validation, rules mode, markdown/json, persistence', async () => {
   const seen = { calls: 0, lastEmails: null };
   setWorklogLLM({
     model: 'fake-model',
@@ -297,7 +314,7 @@ test('worklog: fake LLM evidence validation, rules mode, markdown/json, persiste
   assert.match(empty.markdown, /기록할 업무 활동이 없습니다/);
 });
 
-test('tasks: actionable emails, create/update/list, brief, reply context', async () => {
+mainTest('tasks: actionable emails, create/update/list, brief, reply context', async () => {
   const cands = await findActionableEmails(db, { since: '2025-09-01', before: '2025-09-30' });
   const subjects = cands.map((c) => c.subject);
   assert.ok(subjects.includes('[긴급] 계약서 검토 요청'), JSON.stringify(subjects));
@@ -467,6 +484,72 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
     assert.equal(up.status, 'done');
     assert.equal(up.newCount, 1);
     assert.equal((await fetch(`${base}/import`, { method: 'POST', body: 'x' })).status, 401);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((res) => server.close(res));
+  }
+});
+
+test('accounts: env parsing, isolation by token, per-account dedup and lock', async () => {
+  // 계정 목록: main + b. 짧은 토큰·중복 토큰 계정은 빠진다. Worker 용(requireToken:false)은 토큰 없이도 포함
+  assert.deepEqual(listAccounts().map((a) => a.key), ['main', 'b']);
+  assert.deepEqual(listAccounts(process.env, { requireToken: false }).map((a) => a.key), ['main', 'b', 'dup', 'short']);
+  // 문맥 없이 메일 데이터에 접근하면 막힌다 (다른 사람 메일이 섞이지 않게)
+  await assert.rejects(searchEmails(db, {}), /계정 문맥/);
+  assert.equal(withAccount(MAIN, () => syncLockKey()), SYNC_LOCK_KEY);
+  assert.equal(withAccount(ACC_B, () => syncLockKey()), `${SYNC_LOCK_KEY}:b`);
+
+  const mainBefore = await withAccount(MAIN, () => searchEmails(db, { limit: 1 }));
+  assert.ok(mainBefore.total > 0);
+  const mainEmailId = mainBefore.emails[0].id;
+
+  const server = createHttpServer();
+  await new Promise((res) => server.listen(0, '127.0.0.1', res));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const health = await fetch(`${base}/health`).then((r) => r.json());
+    assert.equal(health.accounts, 2);
+
+    const client = new Client({ name: 'teammate-b', version: '0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'x-api-key': ACC_B.token } } }));
+    const call = async (name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
+    // b 는 main 의 메일·할 일·동기화 기록을 볼 수 없다
+    assert.equal((await call('search_emails', {})).total, 0);
+    assert.equal((await call('read_email', { id: mainEmailId })).success, false);
+    assert.equal((await call('fetch', { id: String(mainEmailId) })).error, `not found: ${mainEmailId}`);
+    assert.equal((await call('list_tasks', { status: ['todo', 'doing', 'waiting', 'done', 'cancelled'] })).total, 0);
+    assert.equal((await call('create_task', { title: '남의 메일로 할 일', sourceEmailId: mainEmailId })).success, false);
+    const st = await call('get_sync_status');
+    assert.equal(st.recentRuns.length, 0);
+    assert.deepEqual(st.emailCounts, []);
+    const stats = await call('get_email_statistics', { since: '2025-09-01', before: '2025-09-30' });
+    assert.equal(stats.totals.total, 0);
+
+    // 같은 메일(Message-ID)이 두 사람 메일함에 다 있어도 각자 저장된다
+    const imp = await call('import_emails', { contentBase64: Buffer.from(sentBackup[0]).toString('base64'), direction: 'received' });
+    assert.equal(imp.newCount, 1);
+    const mine = await call('search_emails', {});
+    assert.equal(mine.total, 1);
+    const t = await call('create_task', { title: 'b 의 할 일', sourceEmailId: mine.emails[0].id });
+    assert.equal(t.success, true);
+    // b 의 할 일·메일은 main 에 보이지 않는다
+    await withAccount(MAIN, async () => {
+      assert.equal((await searchEmails(db, {})).total, mainBefore.total);
+      assert.equal((await listTasks(db, { query: 'b 의 할 일' })).total, 0);
+      assert.equal(await getTask(db, t.task.id), null);
+      assert.equal(await updateTask(db, t.task.id, { status: 'done' }), null);
+    });
+    await client.close();
+
+    // 경로 토큰도 계정을 가린다
+    const client2 = new Client({ name: 'b-path', version: '0' });
+    await client2.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp/${ACC_B.token}`)));
+    const s2 = JSON.parse((await client2.callTool({ name: 'search_emails', arguments: {} })).content[0].text);
+    assert.equal(s2.total, 1);
+    await client2.close();
+
+    // 빠진 계정의 토큰(짧은 토큰)은 거절
+    assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: { 'x-api-key': 'too-short' }, body: '{}' })).status, 401);
   } finally {
     server.closeAllConnections();
     await new Promise((res) => server.close(res));

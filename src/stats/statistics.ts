@@ -1,4 +1,5 @@
-import { and, gte, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { acct } from '../account.js';
 import type { Db } from '../db/client.js';
 import { emails } from '../db/schema.js';
 import { parseDateInput } from '../utils/date.js';
@@ -31,7 +32,8 @@ export async function getStatistics(db: Db, p: StatisticsParams): Promise<Statis
   const granularity: Granularity = p.granularity ?? 'day';
   const topN = Math.min(Math.max(p.topN ?? 10, 1), 50);
   const dateCol = sql`coalesce(${emails.sentAt}, ${emails.receivedAt}, ${emails.createdAt})`;
-  const inPeriod = and(gte(dateCol, since), lte(dateCol, before));
+  const account = acct();
+  const inPeriod = and(eq(emails.account, account), gte(dateCol, since), lte(dateCol, before));
   const self = (p.selfEmail || '').toLowerCase();
 
   const [totals] = await db
@@ -91,13 +93,13 @@ export async function getStatistics(db: Db, p: StatisticsParams): Promise<Statis
   const pending = await db.execute(sql`
     select e.id, e.subject, e.sender, to_char(coalesce(e.sent_at, e.received_at, e.created_at) at time zone 'Asia/Seoul', 'YYYY-MM-DD"T"HH24:MI:SS"+09:00"') as date
     from ${emails} e
-    where e.direction = 'received'
+    where e.account = ${account} and e.direction = 'received'
       and coalesce(e.sent_at, e.received_at, e.created_at) between ${since} and ${before}
       and e.sender_email !~* '(noreply|no-reply|newsletter|notification|mailer-daemon)'
       and (e.subject ~* ${REQUEST_PATTERN} or left(e.body_text, 1500) ~* ${REQUEST_PATTERN})
       and not exists (
         select 1 from ${emails} s
-        where s.direction = 'sent' and s.thread_key = e.thread_key and s.thread_key <> ''
+        where s.account = e.account and s.direction = 'sent' and s.thread_key = e.thread_key and s.thread_key <> ''
           and coalesce(s.sent_at, s.created_at) >= coalesce(e.sent_at, e.received_at, e.created_at)
       )
     order by coalesce(e.sent_at, e.received_at, e.created_at) desc
