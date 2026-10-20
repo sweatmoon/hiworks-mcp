@@ -423,7 +423,7 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
     const client = new Client({ name: 'test', version: '0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } } }));
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    for (const name of ['read_attachment', 'daily_activity', 'find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
+    for (const name of ['attachment_download_link', 'read_attachment', 'daily_activity', 'find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
       assert.ok(tools.includes(name), `tool ${name}`);
     }
     const call = async (name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
@@ -630,6 +630,24 @@ test('attachments: text from pdf/docx/pptx/xlsx/hwpx, read_attachment via POP3 w
     // 첨부가 없는 메일, 가져오기로만 들어온 메일
     const noAtt = (await withAccount(MAIN, () => searchEmails(db, { subject: '회의 일정 조율' }))).emails.find((e) => e.direction === 'received');
     assert.match((await call('read_attachment', { emailId: noAtt.id })).error, /첨부가 없습니다/);
+
+    // 원본 일회용 다운로드 링크: 바이트 그대로, 한 번만, 저장 없음
+    process.env.PUBLIC_BASE_URL = base;
+    const link = await call('attachment_download_link', { emailId: m1.id, filename: '견적서' });
+    assert.equal(link.success, true, link.error);
+    assert.match(link.url, new RegExp(`^${base}/dl/[A-Za-z0-9_-]{32}$`));
+    const dl = await fetch(link.url);
+    assert.equal(dl.status, 200);
+    assert.match(dl.headers.get('content-disposition'), /filename\*=UTF-8''%EA%B2%AC%EC%A0%81%EC%84%9C/);
+    assert.equal(dl.headers.get('cache-control'), 'no-store');
+    assert.equal(Buffer.from(await dl.arrayBuffer()).toString(), 'quote content 123');
+    assert.equal((await fetch(link.url)).status, 404, '두 번째 열기는 막힌다');
+    assert.equal((await fetch(`${base}/dl/not-a-token`)).status, 404);
+    assert.equal((await fetch(`${base}/dl/`)).status, 404);
+    const pdfLink = await call('attachment_download_link', { emailId: rfpMail.id });
+    const pdfBytes = Buffer.from(await (await fetch(pdfLink.url)).arrayBuffer());
+    assert.equal(pdfBytes.subarray(0, 5).toString(), '%PDF-');
+    assert.equal((await call('attachment_download_link', { emailId: noAtt.id })).success, false);
     await client.close();
 
     // 다른 계정 토큰으로는 남의 메일 첨부를 읽을 수 없다
@@ -638,6 +656,8 @@ test('attachments: text from pdf/docx/pptx/xlsx/hwpx, read_attachment via POP3 w
     const denied = JSON.parse((await b.callTool({ name: 'read_attachment', arguments: { emailId: rfpMail.id } })).content[0].text);
     assert.equal(denied.success, false);
     assert.match(denied.error, /찾을 수 없습니다/);
+    const deniedLink = JSON.parse((await b.callTool({ name: 'attachment_download_link', arguments: { emailId: rfpMail.id } })).content[0].text);
+    assert.equal(deniedLink.success, false);
     await b.close();
   } finally {
     server.closeAllConnections();

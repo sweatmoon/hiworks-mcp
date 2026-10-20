@@ -6,6 +6,7 @@ import { getDb } from '../db/client.js';
 import { emails } from '../db/schema.js';
 import { getEmailById, getThread, searchEmails } from '../search/query.js';
 import { readAttachment } from '../attachments/read.js';
+import { createDownloadLink } from '../attachments/download.js';
 import { getStatistics } from '../stats/statistics.js';
 import { importMessages } from '../sync/import.js';
 import { runSync } from '../sync/runner.js';
@@ -148,6 +149,29 @@ export function buildMcpServer(): McpServer {
     async (params) => {
       try {
         return jsonResult(await readAttachment(db, params));
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    'attachment_download_link',
+    {
+      title: '첨부 원본 내려받기 링크',
+      description:
+        '메일 첨부 하나의 원본 파일(엑셀·HWP·PDF 등 그대로)을 내려받을 일회용 링크를 만듭니다. 링크는 한 번만 열 수 있고 10분 뒤 만료됩니다. ' +
+        '링크를 여는 순간 하이웍스 메일함에서 원본을 받아 넘기며 서버에는 저장하지 않습니다. 첨부 고르는 방법은 read_attachment 와 같습니다.',
+      inputSchema: {
+        emailId: z.number().int().describe('메일 id'),
+        attachmentId: z.number().int().optional().describe('read_email 결과 attachments[].id'),
+        index: z.number().int().min(0).optional().describe('첨부 순번 (0부터)'),
+        filename: z.string().optional().describe('파일 이름 일부'),
+      },
+    },
+    async (params) => {
+      try {
+        return jsonResult(await createDownloadLink(db, params));
       } catch (error) {
         return errorResult(error);
       }

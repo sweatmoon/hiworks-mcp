@@ -16,6 +16,7 @@ import { listSyncStates } from '../sync/state.js';
 import { authorizedAccount } from './auth.js';
 import { MAIN_ACCOUNT, listAccounts, selfEmail, withAccount } from '../account.js';
 import { buildMcpServer } from './tools.js';
+import { handleDownload } from '../attachments/download.js';
 
 /** 하이웍스 편지함 백업은 4GB 단위로 분할된다. */
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
@@ -145,6 +146,9 @@ export function createHttpServer(): http.Server {
     const segments = url.pathname.split('/').filter(Boolean);
     try {
       if (url.pathname === '/health' || url.pathname === '/') return await handleHealth(res);
+
+      // 첨부 일회용 다운로드 링크: 토큰 자체가 인증이다 (무작위 24바이트, 10분, 1회)
+      if (segments[0] === 'dl') return await handleDownload(getDb(), req, res, segments[1]);
 
       // /mcp 또는 /mcp/<token>, /import 또는 /import/<token>
       const route = segments[0];

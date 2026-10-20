@@ -37,6 +37,7 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 | `get_sent_emails` | 보낸 메일만 조회 |
 | `read_email` | 본문·첨부 목록, 스레드 |
 | `read_attachment` | 첨부 하나의 텍스트 (PDF·DOCX·PPTX·XLSX·HWPX·TXT). 하이웍스 메일함에서 원본을 다시 받아 읽고 저장하지 않음 |
+| `attachment_download_link` | 첨부 원본 파일 일회용 다운로드 링크 (`/dl/<토큰>`, 1회·10분). 여는 순간 메일함에서 받아 넘기고 저장하지 않음. 링크 주소는 `PUBLIC_BASE_URL`, 없으면 Railway 의 `RAILWAY_PUBLIC_DOMAIN` |
 | `get_email_statistics` | 발신·수신 건수, 일/주/월 추이, 주요 상대, 사업별 건수, 미처리 요청 후보 |
 | `extract_work_activities` | 날짜별 업무 활동 추출 (LLM 또는 규칙), work_activities 저장 |
 | `generate_daily_worklog` / `get_daily_worklog` | 업무일지 생성(Markdown+JSON, daily_worklogs 저장) / 조회 |
