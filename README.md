@@ -36,6 +36,7 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 | `search_emails` | 조건 검색 (query/from/to/subject/since/before/hasAttachments/project, limit/offset, 정렬) |
 | `get_sent_emails` | 보낸 메일만 조회 |
 | `read_email` | 본문·첨부 목록, 스레드 |
+| `read_attachment` | 첨부 하나의 텍스트 (PDF·DOCX·PPTX·XLSX·HWPX·TXT). 하이웍스 메일함에서 원본을 다시 받아 읽고 저장하지 않음 |
 | `get_email_statistics` | 발신·수신 건수, 일/주/월 추이, 주요 상대, 사업별 건수, 미처리 요청 후보 |
 | `extract_work_activities` | 날짜별 업무 활동 추출 (LLM 또는 규칙), work_activities 저장 |
 | `generate_daily_worklog` / `get_daily_worklog` | 업무일지 생성(Markdown+JSON, daily_worklogs 저장) / 조회 |

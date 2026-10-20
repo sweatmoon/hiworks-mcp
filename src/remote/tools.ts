@@ -5,6 +5,7 @@ import { PACKAGE_NAME, PACKAGE_VERSION, serviceConfig } from '../config.js';
 import { getDb } from '../db/client.js';
 import { emails } from '../db/schema.js';
 import { getEmailById, getThread, searchEmails } from '../search/query.js';
+import { readAttachment } from '../attachments/read.js';
 import { getStatistics } from '../stats/statistics.js';
 import { importMessages } from '../sync/import.js';
 import { runSync } from '../sync/runner.js';
@@ -122,6 +123,31 @@ export function buildMcpServer(): McpServer {
         if (!email) return jsonResult({ success: false, error: `메일을 찾을 수 없습니다: ${id}` });
         const thread = includeThread ? await getThread(db, email.threadKey) : undefined;
         return jsonResult({ success: true, email, thread });
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    'read_attachment',
+    {
+      title: '첨부 읽기',
+      description:
+        '메일 첨부 하나의 텍스트를 읽습니다 (PDF, DOCX, PPTX, XLSX, HWPX, TXT·CSV·HTML). 하이웍스 메일함에서 그 메일 원본을 다시 받아 읽고, 아무것도 저장하지 않습니다. ' +
+        'read_email 의 attachments[].id 를 attachmentId 로 넘기세요(첨부가 하나면 생략). 길면 nextOffset 을 offset 으로 넘겨 이어 읽습니다. 본문의 "대용량 첨부파일" 링크와 HWP·이미지는 읽을 수 없습니다.',
+      inputSchema: {
+        emailId: z.number().int().describe('메일 id (search_emails·read_email 결과)'),
+        attachmentId: z.number().int().optional().describe('read_email 결과 attachments[].id'),
+        index: z.number().int().min(0).optional().describe('첨부 순번 (0부터)'),
+        filename: z.string().optional().describe('파일 이름 일부'),
+        offset: z.number().int().min(0).optional().describe('이어 읽을 위치 (이전 결과의 nextOffset)'),
+        maxChars: z.number().int().min(1000).max(100000).optional().describe('돌려줄 최대 글자 수 (기본 40000)'),
+      },
+    },
+    async (params) => {
+      try {
+        return jsonResult(await readAttachment(db, params));
       } catch (error) {
         return errorResult(error);
       }

@@ -423,7 +423,7 @@ test('http server: health, auth, MCP tools over Streamable HTTP, path token, /im
     const client = new Client({ name: 'test', version: '0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } } }));
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    for (const name of ['daily_activity', 'find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
+    for (const name of ['read_attachment', 'daily_activity', 'find_actionable_emails', 'create_task', 'update_task', 'list_tasks', 'get_task', 'daily_brief', 'get_reply_context', 'sync_emails', 'search_emails', 'read_email', 'get_email_statistics', 'get_sent_emails', 'extract_work_activities', 'generate_daily_worklog', 'get_sync_status', 'import_emails', 'search', 'fetch']) {
       assert.ok(tools.includes(name), `tool ${name}`);
     }
     const call = async (name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
@@ -554,4 +554,98 @@ test('accounts: env parsing, isolation by token, per-account dedup and lock', as
     server.closeAllConnections();
     await new Promise((res) => server.close(res));
   }
+});
+
+// 최소 PDF (Helvetica 한 줄). 오프셋을 계산해 xref 를 만든다
+function tinyPdf(text) {
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    null,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  const stream = `BT /F1 18 Tf 20 100 Td (${text}) Tj ET`;
+  objs[3] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  let out = '%PDF-1.4\n';
+  const offs = [];
+  objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+test('attachments: text from pdf/docx/pptx/xlsx/hwpx, read_attachment via POP3 without storing', async () => {
+  const { extractAttachmentText } = await import('../build/attachments/read.js');
+  const pdf = await extractAttachmentText(tinyPdf('Hello RFP 2026'), 'rfp.pdf', 'application/pdf');
+  assert.equal(pdf.format, 'pdf');
+  assert.equal(pdf.pages, 1);
+  assert.match(pdf.text, /Hello RFP 2026/);
+  const docx = zipSync({ 'word/document.xml': strToU8('<w:document><w:body><w:p><w:r><w:t>요구사항 SFR-001</w:t></w:r><w:r><w:t xml:space="preserve"> 검색 기능</w:t></w:r></w:p><w:p><w:r><w:t>A &amp; B</w:t></w:r></w:p></w:body></w:document>') });
+  assert.equal((await extractAttachmentText(Buffer.from(docx), 'a.docx', '')).text, '요구사항 SFR-001 검색 기능\nA & B');
+  const pptx = zipSync({ 'ppt/slides/slide2.xml': strToU8('<p:sld><a:p><a:r><a:t>둘째</a:t></a:r></a:p></p:sld>'), 'ppt/slides/slide1.xml': strToU8('<p:sld><a:p><a:r><a:t>첫째</a:t></a:r></a:p></p:sld>') });
+  const pp = await extractAttachmentText(Buffer.from(pptx), 'a.pptx', '');
+  assert.equal(pp.pages, 2);
+  assert.equal(pp.text, '[슬라이드 1]\n첫째\n\n[슬라이드 2]\n둘째');
+  const xlsx = zipSync({
+    'xl/sharedStrings.xml': strToU8('<sst><si><t>사업명</t></si><si><t>금액</t></si></sst>'),
+    'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>법령검색</t></is></c><c r="B2"><v>485158520</v></c></row></sheetData></worksheet>'),
+  });
+  assert.equal((await extractAttachmentText(Buffer.from(xlsx), 'a.xlsx', '')).text, '[시트 1]\n사업명\t금액\n법령검색\t485158520');
+  const hwpx = zipSync({ 'Contents/section0.xml': strToU8('<hs:sec><hp:p><hp:run><hp:t>제안요청서</hp:t></hp:run></hp:p></hs:sec>') });
+  assert.equal((await extractAttachmentText(Buffer.from(hwpx), 'a.hwpx', '')).text, '제안요청서');
+  await assert.rejects(extractAttachmentText(Buffer.from('x'), 'a.hwp', ''), /HWP/);
+
+  // POP3 로 받은 메일의 PDF 첨부를 실제 경로로 읽는다
+  pop.state.messages.push([
+    'Message-ID: <rfp1@test>', 'From: Kim <jhkim@activo.kr>', 'To: me@hiworks.com', `Subject: ${enc('감리일정 안내')}`, 'Date: Mon, 19 Oct 2026 07:47:00 +0900', 'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="B1"', '', '--B1', 'Content-Type: text/plain; charset=utf-8', '', '일정 안내', '',
+    '--B1', 'Content-Type: application/pdf; name="rfp.pdf"', 'Content-Transfer-Encoding: base64', 'Content-Disposition: attachment; filename="rfp.pdf"', '',
+    tinyPdf('Hello RFP 2026').toString('base64'), '--B1--',
+  ].join(CRLF));
+  await withAccount(MAIN, () => runSync(db, { sources: ['pop3'], force: true }));
+  const rfpMail = (await withAccount(MAIN, () => searchEmails(db, { query: '감리일정' }))).emails[0];
+  const attCount = await getPool().query('select count(*)::int as n, sum(file_size)::int as s from email_attachments where email_id = $1', [rfpMail.id]);
+
+  const server = createHttpServer();
+  await new Promise((res) => server.listen(0, '127.0.0.1', res));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const client = new Client({ name: 'att', version: '0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'x-api-key': process.env.MCP_AUTH_TOKEN } } }));
+    const call = async (name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
+    const r = await call('read_attachment', { emailId: rfpMail.id });
+    assert.equal(r.success, true, r.error);
+    assert.equal(r.format, 'pdf');
+    assert.match(r.text, /Hello RFP 2026/);
+    assert.equal(r.nextOffset, null);
+    // 이어 읽기
+    const part = await call('read_attachment', { emailId: rfpMail.id, offset: 3, maxChars: 1000 });
+    assert.equal(part.offset, 3);
+    // 텍스트 첨부 (m1 견적서.txt, 백업 가져오기 후 POP3 uid 가 보강된 메일)
+    const m1 = (await withAccount(MAIN, () => searchEmails(db, { subject: '견적서 송부' }))).emails[0];
+    const t = await call('read_attachment', { emailId: m1.id, filename: '견적서' });
+    assert.equal(t.text, 'quote content 123');
+    // 첨부가 없는 메일, 가져오기로만 들어온 메일
+    const noAtt = (await withAccount(MAIN, () => searchEmails(db, { subject: '회의 일정 조율' }))).emails.find((e) => e.direction === 'received');
+    assert.match((await call('read_attachment', { emailId: noAtt.id })).error, /첨부가 없습니다/);
+    await client.close();
+
+    // 다른 계정 토큰으로는 남의 메일 첨부를 읽을 수 없다
+    const b = new Client({ name: 'b', version: '0' });
+    await b.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'x-api-key': ACC_B.token } } }));
+    const denied = JSON.parse((await b.callTool({ name: 'read_attachment', arguments: { emailId: rfpMail.id } })).content[0].text);
+    assert.equal(denied.success, false);
+    assert.match(denied.error, /찾을 수 없습니다/);
+    await b.close();
+  } finally {
+    server.closeAllConnections();
+    await new Promise((res) => server.close(res));
+  }
+  // 읽은 뒤에도 DB 의 첨부 정보는 그대로 (내용을 저장하지 않음)
+  const after = await getPool().query('select count(*)::int as n, sum(file_size)::int as s from email_attachments where email_id = $1', [rfpMail.id]);
+  assert.deepEqual(after.rows, attCount.rows);
+  const cols = await getPool().query("select column_name from information_schema.columns where table_name = 'email_attachments'");
+  assert.deepEqual(cols.rows.map((c) => c.column_name).sort(), ['created_at', 'email_id', 'file_size', 'filename', 'id', 'mime_type']);
 });

@@ -58,5 +58,6 @@ description: 하이웍스 메일 기반 업무관리 에이전트. 아침 브리
 | `create_task` / `update_task` / `list_tasks` / `get_task` | 할 일 CRUD |
 | `get_reply_context` | 답장 맥락 |
 | `search_emails` / `read_email` / `get_sent_emails` | 메일 검색·읽기 |
+| `read_attachment` | 첨부(RFP·제안서 등) 텍스트 읽기. `read_email` 의 attachments[].id 를 넘기고, 길면 nextOffset 으로 이어 읽는다 |
 | `get_email_statistics` | 기간 통계 |
 | `get_sync_status` / `sync_emails` | 동기화 상태·즉시 실행 |
