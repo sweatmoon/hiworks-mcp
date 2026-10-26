@@ -2,6 +2,23 @@
 
 서버 주소를 `https://<your-app>.up.railway.app` 라고 가정한다. 인증 토큰은 Railway 의 `MCP_AUTH_TOKEN`.
 
+## claude.ai 커넥터 (OAuth 로그인, 권장)
+
+Team 조직의 소유자가 추가한 사용자 지정 커넥터는 **조직 전체에 보인다**. 헤더(`x-api-key`)나 URL 경로에 고정 토큰을 넣으면
+그 토큰이 조직에 공유되어 팀원도 이 메일함을 읽을 수 있다. claude.ai 에는 반드시 OAuth 로 연결한다.
+
+1. Railway 서버 변수 `OAUTH_LOGIN_PASSWORD` 에 12자 이상 비밀번호를 넣는다(본인만 알고, 메일 비밀번호와 다르게).
+2. claude.ai → 설정 → 커넥터 → **사용자 지정 커넥터 추가**
+   - URL: `https://<your-app>.up.railway.app/mcp` (경로에 토큰을 붙이지 않는다)
+   - 인증: OAuth(로그인). 요청 헤더는 비워 둔다. OAuth 클라이언트 ID·시크릿도 비워 둔다(동적 등록).
+3. **연결**을 누르면 「hiworks 메일 연결」 화면이 뜬다. 메일 주소와 연결 비밀번호로 로그인한다.
+4. 팀원이 같은 커넥터를 켜도 로그인 화면에서 막힌다(자기 계정의 `ACCOUNT_<KEY>_OAUTH_PASSWORD` 가 있으면 자기 메일함만 열린다).
+
+- 접속 토큰 24시간, 갱신 토큰 90일(쓸 때마다 새로 발급). `OAUTH_ACCESS_TTL_HOURS`, `OAUTH_REFRESH_TTL_DAYS` 로 바꾼다.
+- 로그인 실패는 같은 IP 15분 5회, 전체 1시간 30회에서 잠긴다.
+- **모든 연결을 끊으려면** `OAUTH_LOGIN_PASSWORD` 를 바꾼다. 이전에 받은 토큰이 모두 무효가 된다.
+- 고정 토큰 방식을 아예 막으려면 `STATIC_TOKEN_AUTH=off`. (Claude Code·백업 업로드도 고정 토큰을 쓰므로, 쓰지 않을 때만)
+
 ## Claude Code (원격 HTTP)
 
 ```bash

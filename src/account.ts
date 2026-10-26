@@ -4,8 +4,9 @@ import { log } from './config.js';
 
 /**
  * 메일함 계정. 서버 하나가 여러 사람의 메일함을 나눠 담는다 (중앙 관리).
- *  - main: 기존 변수 HIWORKS_USERNAME / HIWORKS_PASSWORD / MCP_AUTH_TOKEN
- *  - 그 밖: ACCOUNT_<KEY>_USERNAME / ACCOUNT_<KEY>_PASSWORD / ACCOUNT_<KEY>_TOKEN (KEY 는 영문 대문자·숫자·_)
+ *  - main: 기존 변수 HIWORKS_USERNAME / HIWORKS_PASSWORD / MCP_AUTH_TOKEN / OAUTH_LOGIN_PASSWORD
+ *  - 그 밖: ACCOUNT_<KEY>_USERNAME / ACCOUNT_<KEY>_PASSWORD / ACCOUNT_<KEY>_TOKEN / ACCOUNT_<KEY>_OAUTH_PASSWORD (KEY 는 영문 대문자·숫자·_)
+ * OAuth 로그인 비밀번호가 있는 계정만 claude.ai 커넥터 로그인(OAuth)으로 접속할 수 있다.
  * 접속 토큰으로 계정을 가리고, DB 의 모든 행은 account 열로 나뉜다.
  */
 export interface Account {
@@ -15,6 +16,8 @@ export interface Account {
   password: string;
   /** 이 계정 전용 MCP 접속 토큰 (16자 이상) */
   token: string;
+  /** OAuth 로그인 화면에서 쓰는 비밀번호 (12자 이상, 없으면 OAuth 로그인 불가) */
+  loginPassword: string;
 }
 
 export const MAIN_ACCOUNT = 'main';
@@ -38,8 +41,9 @@ export function listAccounts(env: NodeJS.ProcessEnv = process.env, opts: { requi
     username: (env['HIWORKS_USERNAME'] || '').trim(),
     password: env['HIWORKS_PASSWORD'] || '',
     token: env['MCP_AUTH_TOKEN'] || '',
+    loginPassword: env['OAUTH_LOGIN_PASSWORD'] || '',
   };
-  if (requireToken ? main.token.length >= 16 : Boolean(main.username && main.password)) out.push(main);
+  if (requireToken ? main.token.length >= 16 || main.loginPassword.length >= 12 : Boolean(main.username && main.password)) out.push(main);
   for (const name of Object.keys(env).sort()) {
     const m = KEY_RE.exec(name);
     if (!m) continue;
@@ -53,16 +57,17 @@ export function listAccounts(env: NodeJS.ProcessEnv = process.env, opts: { requi
       username: (env[name] || '').trim(),
       password: env[`ACCOUNT_${m[1]}_PASSWORD`] || '',
       token: env[`ACCOUNT_${m[1]}_TOKEN`] || '',
+      loginPassword: env[`ACCOUNT_${m[1]}_OAUTH_PASSWORD`] || '',
     };
     if (!acc.username || !acc.password) {
       warn(`계정 ${key}: USERNAME 또는 PASSWORD 가 비어 있어 건너뜁니다`);
       continue;
     }
-    if (requireToken && acc.token.length < 16) {
-      warn(`계정 ${key}: ACCOUNT_${m[1]}_TOKEN 이 16자 미만이라 건너뜁니다`);
+    if (requireToken && acc.token.length < 16 && acc.loginPassword.length < 12) {
+      warn(`계정 ${key}: ACCOUNT_${m[1]}_TOKEN(16자 이상) 또는 ACCOUNT_${m[1]}_OAUTH_PASSWORD(12자 이상)가 없어 건너뜁니다`);
       continue;
     }
-    if (requireToken && out.some((a) => a.token === acc.token)) {
+    if (requireToken && acc.token && out.some((a) => a.token === acc.token)) {
       warn(`계정 ${key}: 토큰이 다른 계정과 같아 건너뜁니다`);
       continue;
     }
@@ -89,9 +94,20 @@ export function accountByToken(token: string | undefined): Account | null {
   let found: Account | null = null;
   // 모든 계정과 비교한다 (일찍 끝내지 않아 응답 시간으로 계정 수를 알 수 없게)
   for (const acc of listAccounts()) {
-    if (safeEqual(t, acc.token) && !found) found = acc;
+    if (acc.token.length >= 16 && safeEqual(t, acc.token) && !found) found = acc;
   }
   return found;
+}
+
+/** 계정 키로 찾는다 (OAuth 토큰에 저장된 키) */
+export function accountByKey(key: string): Account | null {
+  return listAccounts().find((a) => a.key === key) ?? null;
+}
+
+/** 메일 주소로 찾는다 (OAuth 로그인 화면) */
+export function accountByEmail(email: string): Account | null {
+  const e = email.trim().toLowerCase();
+  return listAccounts().find((a) => a.username.toLowerCase() === e) ?? null;
 }
 
 const store = new AsyncLocalStorage<Account>();

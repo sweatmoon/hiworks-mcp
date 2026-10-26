@@ -11,7 +11,8 @@
 2. Settings → **Config-as-code → Config File Path** 에 `railway.server.json` 을 지정한다. (Dockerfile 빌드, 시작 명령, `/health` 헬스체크가 들어 있다.)
 3. Variables:
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
-   - `MCP_AUTH_TOKEN` = `openssl rand -hex 32` 결과
+   - `MCP_AUTH_TOKEN` = `openssl rand -hex 32` 결과 (Claude Code·백업 업로드용, claude.ai 커넥터에는 넣지 않음)
+   - `OAUTH_LOGIN_PASSWORD` = 12자 이상, 본인만 아는 값 (claude.ai 커넥터 OAuth 로그인)
    - `HIWORKS_USERNAME`, `HIWORKS_PASSWORD` (sync_emails 도구로 즉시 동기화하려면 필요)
    - `ANTHROPIC_API_KEY` (AI 업무일지)
    - `PROJECT_RULES` (선택)
@@ -40,7 +41,7 @@
 
 ## 6. 보안 체크리스트
 - 비밀번호·토큰·API 키는 Railway Variables 에만 둔다. 저장소에는 `.env.example` 만 있다.
-- 서버는 `MCP_AUTH_TOKEN` 이 16자 미만이면 기동을 거부한다. 팀원 토큰이 16자 미만이거나 다른 계정과 겹치면 그 계정만 건너뛴다.
+- 서버는 `MCP_AUTH_TOKEN`(16자 이상)과 `OAUTH_LOGIN_PASSWORD`(12자 이상)가 둘 다 없으면 기동을 거부한다. 팀원 토큰이 16자 미만이거나 다른 계정과 겹치면 그 계정만 건너뛴다.
 - 모든 메일·할 일·업무일지 조회는 접속 토큰의 계정(`account` 열)으로 걸러진다.
 - 메일 삭제 도구는 없다. 원격 서버는 읽기 전용이며 SMTP 발송 도구도 노출하지 않는다 (로컬 stdio 서버에만 send/reply/forward 가 있다).
 - 로그에는 메일 원문·자격증명을 남기지 않는다 (`NODE_ENV=development` 일 때만 디버그 로그).
