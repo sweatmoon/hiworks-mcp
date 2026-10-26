@@ -223,3 +223,41 @@ export const tasks = pgTable(
 
 export type TaskRow = typeof tasks.$inferSelect;
 export type NewTaskRow = typeof tasks.$inferInsert;
+
+// ---- OAuth (claude.ai 커넥터 로그인) ----
+/** 동적 등록(DCR)한 OAuth 클라이언트. 공개 클라이언트(PKCE)만 받는다 */
+export const oauthClients = pgTable('oauth_clients', {
+  clientId: text('client_id').primaryKey(),
+  clientName: text('client_name').notNull().default(''),
+  redirectUris: text('redirect_uris').array().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** 인가 코드. 값은 SHA-256 해시로만 저장하고 한 번 쓰면 지운다 */
+export const oauthCodes = pgTable('oauth_codes', {
+  codeHash: text('code_hash').primaryKey(),
+  clientId: text('client_id').notNull(),
+  account: text('account').notNull(),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  /** 로그인 비밀번호 지문. 비밀번호를 바꾸면 이전에 받은 코드·토큰이 모두 무효가 된다 */
+  pwFp: text('pw_fp').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+/** 접속·갱신 토큰. 값은 SHA-256 해시로만 저장한다 */
+export const oauthTokens = pgTable(
+  'oauth_tokens',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    /** access | refresh */
+    kind: text('kind').notNull(),
+    clientId: text('client_id').notNull(),
+    account: text('account').notNull(),
+    pwFp: text('pw_fp').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('oauth_tokens_account_idx').on(t.account), index('oauth_tokens_expires_idx').on(t.expiresAt)]
+);

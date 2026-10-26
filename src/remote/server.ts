@@ -17,6 +17,7 @@ import { authorizedAccount } from './auth.js';
 import { MAIN_ACCOUNT, listAccounts, selfEmail, withAccount } from '../account.js';
 import { buildMcpServer } from './tools.js';
 import { handleDownload } from '../attachments/download.js';
+import { authorizationServerMetadata, handleAuthorize, handleRegister, handleRevoke, handleToken, protectedResourceMetadata, wwwAuthenticate } from './oauth.js';
 
 /** 하이웍스 편지함 백업은 4GB 단위로 분할된다. */
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
@@ -150,13 +151,23 @@ export function createHttpServer(): http.Server {
       // 첨부 일회용 다운로드 링크: 토큰 자체가 인증이다 (무작위 24바이트, 10분, 1회)
       if (segments[0] === 'dl') return await handleDownload(getDb(), req, res, segments[1]);
 
+      // OAuth (claude.ai 커넥터 로그인)
+      if (url.pathname.startsWith('/.well-known/oauth-protected-resource')) return protectedResourceMetadata(req, res);
+      if (url.pathname.startsWith('/.well-known/oauth-authorization-server') || url.pathname === '/.well-known/openid-configuration') {
+        return authorizationServerMetadata(req, res);
+      }
+      if (url.pathname === '/oauth/register') return await handleRegister(req, res);
+      if (url.pathname === '/oauth/authorize') return await handleAuthorize(req, res, url);
+      if (url.pathname === '/oauth/token') return await handleToken(req, res);
+      if (url.pathname === '/oauth/revoke') return await handleRevoke(req, res);
+
       // /mcp 또는 /mcp/<token>, /import 또는 /import/<token>
       const route = segments[0];
       const pathToken = segments[1];
       if (route !== 'mcp' && route !== 'import') return json(res, 404, { error: 'not found' });
-      const account = authorizedAccount(req, pathToken);
+      const account = await authorizedAccount(req, pathToken);
       if (!account) {
-        res.setHeader('WWW-Authenticate', 'Bearer realm="hiworks-mcp"');
+        res.setHeader('WWW-Authenticate', wwwAuthenticate(req));
         return json(res, 401, { error: 'unauthorized' });
       }
       // 이 요청 안의 모든 DB 접근은 토큰 주인의 메일함으로 한정된다
@@ -178,8 +189,8 @@ export function createHttpServer(): http.Server {
 }
 
 async function main(): Promise<void> {
-  if (!serviceConfig.authToken || serviceConfig.authToken.length < 16) {
-    console.error('MCP_AUTH_TOKEN 환경변수를 16자 이상으로 설정해야 서버를 시작할 수 있습니다. 예: openssl rand -hex 32');
+  if (!listAccounts().length) {
+    console.error('접속 수단이 없습니다. MCP_AUTH_TOKEN(16자 이상) 또는 OAUTH_LOGIN_PASSWORD(12자 이상)를 설정하세요. 예: openssl rand -hex 32');
     process.exit(1);
   }
   await runMigrations();
