@@ -48,7 +48,7 @@ export function startPop3(port) {
         const [cmd, ...args] = line.split(' ');
         state.log.push(line);
         const msgs = state.messages;
-        const uid = (i) => `UID-${Buffer.from(msgs[i].match(/Message-ID: <(.*)>/)[1]).toString('hex')}`;
+        const uid = (i) => msgs[i].match(/^X-Mock-UID: (\S+)/m)?.[1] ?? `UID-${Buffer.from(msgs[i].match(/Message-ID: <(.*)>/)[1]).toString('hex')}`;
         switch (cmd.toUpperCase()) {
           case 'USER': sock.write(`+OK${CRLF}`); break;
           case 'PASS': sock.write(args[0] === 'secret' ? `+OK Logged in.${CRLF}` : `-ERR [AUTH] Authentication failed.${CRLF}`); break;

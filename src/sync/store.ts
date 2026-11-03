@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { AddressObject, ParsedMail } from 'mailparser';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { emailAttachments, emails, type NewEmailRow, type RecipientJson } from '../db/schema.js';
+import { emailAttachments, emails, sourceUidAliases, type NewEmailRow, type RecipientJson } from '../db/schema.js';
 import { projectRules, type ProjectRule } from '../config.js';
 import { normalizeMessageId, stripHtml } from '../utils/mail.js';
 import { acct } from '../account.js';
@@ -139,6 +139,12 @@ export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<Inse
             .update(emails)
             .set({ source: prepared.row.source, sourceUid: prepared.row.sourceUid })
             .where(and(eq(emails.id, e.id), sql`${emails.sourceUid} is null`));
+        } else if (e && e.sourceUid !== prepared.row.sourceUid) {
+          // 같은 메일이 다른 uid 로 이미 저장됨 (메일함에 두 통). 이 uid 도 받은 것으로 남겨 다시 내려받지 않게 한다.
+          await tx
+            .insert(sourceUidAliases)
+            .values({ account, source: prepared.row.source, sourceUid: prepared.row.sourceUid, emailId: e.id })
+            .onConflictDoNothing();
         }
         return { id: e?.id ?? null, inserted: false };
       }
@@ -151,12 +157,22 @@ export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<Inse
   });
 }
 
-/** 이미 저장된 POP3 uid 집합 */
+/** 이미 저장된 POP3 uid 집합 (다른 uid 로 저장된 같은 메일의 추가 uid 포함) */
 export async function knownSourceUids(db: Db, source: string, uids: string[]): Promise<Set<string>> {
   if (uids.length === 0) return new Set();
-  const rows = await db
-    .select({ uid: emails.sourceUid })
-    .from(emails)
-    .where(and(eq(emails.account, acct()), eq(emails.source, source), inArray(emails.sourceUid, uids)));
-  return new Set(rows.map((r) => r.uid).filter((u): u is string => Boolean(u)));
+  const account = acct();
+  const known = new Set<string>();
+  // UIDL 은 수천 개가 될 수 있어 나눠서 묻는다 (바인드 변수 한도)
+  for (let i = 0; i < uids.length; i += 5000) {
+    const part = uids.slice(i, i + 5000);
+    const [rows, aliases] = await Promise.all([
+      db.select({ uid: emails.sourceUid }).from(emails).where(and(eq(emails.account, account), eq(emails.source, source), inArray(emails.sourceUid, part))),
+      db
+        .select({ uid: sourceUidAliases.sourceUid })
+        .from(sourceUidAliases)
+        .where(and(eq(sourceUidAliases.account, account), eq(sourceUidAliases.source, source), inArray(sourceUidAliases.sourceUid, part))),
+    ]);
+    for (const r of [...rows, ...aliases]) if (r.uid) known.add(r.uid);
+  }
+  return known;
 }

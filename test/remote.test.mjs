@@ -186,6 +186,31 @@ mainTest('inbox sync: incremental, bcc-to-self as sent, uid backfill, lock', asy
   assert.ok(state.lastSuccessAt);
 });
 
+mainTest('inbox sync: 같은 Message-ID 가 다른 uid 로 또 있으면 한 번만 받고 다음부터 건너뛰지 않는다', async () => {
+  // 메일함에 같은 메일이 두 통 (받는사람 + 숨은참조 사본 등). 두 번째 uid 는 emails.source_uid 에 넣을 자리가 없다
+  const dup = `X-Mock-UID: DUP-m2${CRLF}${pop3Messages[1]}`;
+  pop.state.messages.push(dup);
+  try {
+    const first = await runSync(db, { sources: ['pop3'], force: true });
+    assert.equal(first.results[0].ok, true);
+    assert.equal(first.results[0].newCount, 0);
+    assert.equal(first.results[0].skippedCount, 1);
+    const alias = await getPool().query("select source, source_uid from source_uid_aliases where source_uid = 'DUP-m2'");
+    assert.equal(alias.rows.length, 1);
+    assert.equal(alias.rows[0].source, 'pop3');
+
+    const second = await runSync(db, { sources: ['pop3'], force: true });
+    assert.equal(second.results[0].newCount, 0);
+    assert.equal(second.results[0].skippedCount, 0, '이미 받은 uid 를 다시 내려받지 않는다');
+    const state = await getSyncState(db, 'pop3');
+    assert.equal(state.stats.pendingBefore, 0);
+    const rows = await getPool().query("select count(*)::int as n from emails where message_id = 'm2@test'");
+    assert.equal(rows.rows[0].n, 1, '메일은 한 통만 저장된다');
+  } finally {
+    pop.state.messages.splice(pop.state.messages.indexOf(dup), 1);
+  }
+});
+
 mainTest('sync failure: error recorded, backoff, force', async () => {
   // 비밀번호가 틀린 같은 계정 (문맥이 계정 정보를 들고 있다)
   const wrong = { ...MAIN, password: 'wrong' };
