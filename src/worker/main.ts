@@ -12,6 +12,7 @@ import { runMigrations } from '../db/migrate.js';
 import { emails } from '../db/schema.js';
 import { listAccounts, withAccount, type Account } from '../account.js';
 import { runSync, type SyncSummary } from '../sync/runner.js';
+import { describeError } from '../utils/errors.js';
 import { closeInterruptedRuns, listSyncStates } from '../sync/state.js';
 import { syncLockKey, withAdvisoryLock } from '../sync/lock.js';
 import { formatKST } from '../utils/date.js';
@@ -19,6 +20,8 @@ import { formatKST } from '../utils/date.js';
 let lastSummary: Record<string, SyncSummary> = {};
 let lastRunAt: Date | null = null;
 let running = false;
+/** 프로세스가 뜬 뒤 첫 실행은 실패 백오프를 무시한다 — 재배포(= 고친 코드)면 기다리지 않고 바로 다시 시도 */
+let firstTick = true;
 let catchUpTimer: NodeJS.Timeout | null = null;
 
 /** 동기화할 계정들. 접속을 받지 않으므로 토큰은 없어도 된다 */
@@ -28,7 +31,9 @@ function syncAccounts(): Account[] {
 
 function describe(summary: SyncSummary): string {
   if (!summary.acquired) return 'skipped (lock held)';
-  return summary.results.map((r) => `${r.source}:${r.ok ? `+${r.newCount}${r.remaining ? ` (남음 ${r.remaining})` : ''}` : r.skippedReason ? 'backoff' : 'ERR'}`).join(' ');
+  // 실패 이유도 한 줄에 붙인다(state.ts 가 describeError 로 SQL·메일 내용을 뺀 문장). 줄바꿈은 공백으로, 160자까지.
+  const why = (e?: string) => (e ? ` (${e.replace(/\s+/g, ' ').slice(0, 160)})` : '');
+  return summary.results.map((r) => `${r.source}:${r.ok ? `+${r.newCount}${r.remaining ? ` (남음 ${r.remaining})` : ''}` : r.skippedReason ? 'backoff' : `ERR${why(r.error)}`}`).join(' ');
 }
 
 /** 백필 중(남은 메일이 있음)이면 주기를 기다리지 않고 잠시 후 바로 이어서 가져온다. */
@@ -50,11 +55,12 @@ async function tick(): Promise<void> {
     const summaries: Record<string, SyncSummary> = {};
     for (const account of syncAccounts()) {
       try {
-        summaries[account.key] = await withAccount(account, () => runSync(getDb()));
+        summaries[account.key] = await withAccount(account, () => runSync(getDb(), { force: firstTick }));
       } catch (err) {
-        console.error(`sync ${account.key} failed:`, err instanceof Error ? err.message : err);
+        console.error(`sync ${account.key} failed:`, describeError(err));
       }
     }
+    firstTick = false;
     lastSummary = summaries;
     lastRunAt = new Date();
     const deleted = await applyRetention();

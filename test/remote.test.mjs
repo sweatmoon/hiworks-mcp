@@ -211,6 +211,49 @@ mainTest('inbox sync: 같은 Message-ID 가 다른 uid 로 또 있으면 한 번
   }
 });
 
+mainTest('inbox sync: NUL 문자 메일은 정리해 저장, 저장이 안 되는 메일은 표시 행으로 남기고 다음 메일을 계속 받는다', async () => {
+  const { describeError, isDataError } = await import('../build/utils/errors.js');
+  const nul = `X-Mock-UID: NUL-1${CRLF}` + eml({ id: 'nul1@test', from: 'Kang <kang@card.co.kr>', to: SELF, subject: '법인카드 발급서류 안내', date: 'Mon, 27 Apr 2026 13:56:00 +0900', text: '서류 안내\u0000드립니다&nbsp;확인 부탁' });
+  const blocked = `X-Mock-UID: BLOCK-1${CRLF}` + eml({ id: 'block1@test', from: 'x@y.com', to: SELF, subject: 'BLOCKME', date: 'Mon, 27 Apr 2026 14:00:00 +0900', text: '저장 안 되는 메일' });
+  const after = `X-Mock-UID: AFTER-1${CRLF}` + eml({ id: 'after1@test', from: 'z@y.com', to: SELF, subject: '그 다음 메일', date: 'Mon, 27 Apr 2026 14:05:00 +0900', text: '정상 메일' });
+  const added = [nul, blocked, after];
+  pop.state.messages.push(...added);
+  // 정리로도 못 고치는 데이터 오류를 흉내: 제목 BLOCKME 는 CHECK 위반(SQLSTATE 23514)
+  await getPool().query(`ALTER TABLE emails ADD CONSTRAINT test_block CHECK (subject <> 'BLOCKME')`);
+  try {
+    const first = await runSync(db, { sources: ['pop3'], force: true });
+    assert.equal(first.results[0].ok, true, JSON.stringify(first.results[0]));
+    assert.equal(first.results[0].newCount, 2, 'NUL 메일과 그 다음 메일은 저장');
+    const state = await getSyncState(db, 'pop3');
+    assert.equal(state.stats.storeFailed, 1);
+    assert.equal(state.consecutiveFailures, 0);
+    const rows = (await getPool().query(`SELECT source_uid, subject, body_text FROM emails WHERE source_uid IN ('NUL-1','BLOCK-1','AFTER-1') ORDER BY source_uid`)).rows;
+    assert.deepEqual(rows.map((r) => r.source_uid), ['AFTER-1', 'BLOCK-1', 'NUL-1']);
+    const nulRow = rows.find((r) => r.source_uid === 'NUL-1');
+    assert.equal(nulRow.subject, '법인카드 발급서류 안내'); assert.ok(!nulRow.body_text.includes('\u0000')); assert.match(nulRow.body_text, /서류 안내드립니다&nbsp;확인/);
+    const stub = rows.find((r) => r.source_uid === 'BLOCK-1');
+    assert.equal(stub.subject, '(가져오기 실패)');
+    assert.match(stub.body_text, /저장 실패: DB 저장 실패: .*test_block.*\(SQLSTATE 23514\)/);
+    assert.ok(!stub.body_text.includes('insert into'), 'SQL 은 남기지 않는다');
+    // 다음 실행: 표시 행의 uid 도 기억하므로 다시 받지 않는다
+    const second = await runSync(db, { sources: ['pop3'], force: true });
+    assert.equal(second.results[0].ok, true); assert.equal(second.results[0].newCount, 0); assert.equal(second.results[0].skippedCount, 0);
+    assert.equal((await getSyncState(db, 'pop3')).stats.pendingBefore, 0);
+  } finally {
+    await getPool().query(`ALTER TABLE emails DROP CONSTRAINT IF EXISTS test_block`);
+    for (const m of added) pop.state.messages.splice(pop.state.messages.indexOf(m), 1);
+    await getPool().query(`DELETE FROM emails WHERE source_uid IN ('NUL-1','BLOCK-1','AFTER-1')`);
+  }
+  // 오류 문장: drizzle 의 "Failed query + 파라미터"는 버리고 Postgres 원인만
+  const pgErr = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00'), { code: '22021' });
+  const wrapped = Object.assign(new Error('Failed query: insert into "emails" ("subject", "body_text") values ($1, $2)\nparams: 비밀 본문,카드번호'), { cause: pgErr });
+  assert.equal(describeError(wrapped), 'DB 저장 실패: invalid byte sequence for encoding "UTF8": 0x00 (SQLSTATE 22021)');
+  assert.equal(isDataError(wrapped), true);
+  assert.equal(isDataError(Object.assign(new Error('Failed query: x'), { cause: Object.assign(new Error('terminating connection'), { code: '57P01' }) })), false, '연결 오류는 데이터 오류 아님');
+  assert.equal(isDataError(new Error('ECONNRESET')), false);
+  assert.equal(describeError(new Error('-ERR [AUTH] Authentication failed.')), '-ERR [AUTH] Authentication failed.');
+});
+
 mainTest('sync failure: error recorded, backoff, force', async () => {
   // 비밀번호가 틀린 같은 계정 (문맥이 계정 정보를 들고 있다)
   const wrong = { ...MAIN, password: 'wrong' };

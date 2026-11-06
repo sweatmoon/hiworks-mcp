@@ -3,6 +3,7 @@ import { log, type Credentials } from '../config.js';
 import { Pop3Session } from '../services/pop3.js';
 import { fingerprint, insertEmail, knownSourceUids, prepareEmail, type PreparedEmail } from './store.js';
 import { heartbeat, type RunOutcome } from './state.js';
+import { describeError, isDataError } from '../utils/errors.js';
 
 /** 한 통을 내려받는 데 허용하는 최대 시간. 넘기면 실패로 기록하고 다음 메일로 넘어간다 (세션은 새로 연다). */
 const RETR_TIMEOUT_MS = Number(process.env['SYNC_RETR_TIMEOUT_MS'] || 180000);
@@ -69,13 +70,31 @@ export async function syncInbox(db: Db, creds: Credentials, opts: InboxSyncOptio
 
     let newCount = 0;
     let skippedCount = 0;
-    let failed = 0;
+    let failed = 0; // 내려받기 실패(이번 실행 합계)
+    let failedInARow = 0; // 연속 내려받기 실패 — 서버·연결 문제로 보고 실행을 멈추는 기준
+    let storeFailed = 0; // 내용 때문에 저장하지 못해 표시 행으로 남긴 메일
     let lastUid: string | null = null;
     for (const [i, ref] of batch.entries()) {
       if (i > 0 && i % 10 === 0) await heartbeat(db, 'pop3');
       if (i > 0 && i % 50 === 0) console.error(`  sync progress ${i}/${batch.length} (남음 ${pending.length - i})`);
+      let parsed: Awaited<ReturnType<Pop3Session['retrieve']>>;
       try {
-        const parsed = await withTimeout(session.retrieve(ref.msgNum), RETR_TIMEOUT_MS, `RETR ${ref.msgNum} (${ref.size ?? '?'} bytes)`);
+        parsed = await withTimeout(session.retrieve(ref.msgNum), RETR_TIMEOUT_MS, `RETR ${ref.msgNum} (${ref.size ?? '?'} bytes)`);
+        failedInARow = 0;
+      } catch (err) {
+        failed++;
+        failedInARow++;
+        const reason = describeError(err);
+        console.error(`RETR ${ref.msgNum} failed: ${reason}`);
+        if (/초과/.test(reason)) {
+          // 타임아웃이면 소켓 상태를 믿을 수 없으므로 표시 행만 남기고 이번 실행을 끝낸다. 다음 실행은 새 세션으로 이어진다.
+          await insertEmail(db, failedStub(ref.uid, ref.size, reason));
+          break;
+        }
+        if (failedInARow >= 5) throw new Error(`메일 ${failedInARow}건 연속 수신 실패: ${reason}`);
+        continue;
+      }
+      try {
         const prepared = prepareEmail(parsed, {
           source: 'pop3',
           sourceUid: ref.uid,
@@ -88,22 +107,22 @@ export async function syncInbox(db: Db, creds: Credentials, opts: InboxSyncOptio
         else skippedCount++;
         lastUid = ref.uid;
       } catch (err) {
-        failed++;
-        const reason = err instanceof Error ? err.message : String(err);
-        console.error(`RETR ${ref.msgNum} failed: ${reason}`);
-        if (/초과/.test(reason)) {
-          // 타임아웃이면 소켓 상태를 믿을 수 없으므로 표시 행만 남기고 이번 실행을 끝낸다. 다음 실행은 새 세션으로 이어진다.
-          await insertEmail(db, failedStub(ref.uid, ref.size, reason));
-          break;
-        }
-        if (failed >= 5) throw new Error(`메일 ${failed}건 연속 수신 실패: ${reason}`);
+        // 연결 끊김 같은 일시 오류는 그대로 던져 이번 실행을 멈춘다(다음 실행에서 같은 메일을 다시 시도).
+        if (!isDataError(err)) throw err;
+        // 메일 내용 때문에 저장이 안 되는 경우: 표시 행으로 남겨(uid 기억) 다음 메일로 넘어간다.
+        // 메일 한 통 때문에 전체 수집이 멈추지 않게 한다 (2026-11-06, 저장 실패 메일에서 수집이 멈춘 사례).
+        storeFailed++;
+        const reason = describeError(err);
+        console.error(`store ${ref.msgNum} failed (표시 행으로 남기고 계속): ${reason}`);
+        await insertEmail(db, failedStub(ref.uid, ref.size, `저장 실패: ${reason}`));
+        lastUid = ref.uid;
       }
     }
     return {
       newCount,
       skippedCount,
       lastUid,
-      details: { serverTotal: refs.length, pendingBefore: pending.length, processed: batch.length, failed, remaining: pending.length - batch.length },
+      details: { serverTotal: refs.length, pendingBefore: pending.length, processed: batch.length, failed, storeFailed, remaining: pending.length - batch.length },
     };
   } finally {
     await session.close();
