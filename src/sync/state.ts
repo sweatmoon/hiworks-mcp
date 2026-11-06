@@ -2,6 +2,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { acct } from '../account.js';
 import type { Db } from '../db/client.js';
 import { emailSyncState, syncRuns } from '../db/schema.js';
+import { describeError } from '../utils/errors.js';
 
 export type SyncSource = 'pop3' | 'import' | 'webmail';
 
@@ -70,7 +71,7 @@ export async function trackRun(
       .where(eq(syncRuns.id, run.id));
     return { ...outcome, ok: true };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
     const now = new Date();
     const prev = await getSyncState(db, source);
     const failures = (prev?.consecutiveFailures ?? 0) + 1;

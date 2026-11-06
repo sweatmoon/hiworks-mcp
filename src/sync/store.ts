@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { AddressObject, ParsedMail } from 'mailparser';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { emailAttachments, emails, type NewEmailRow, type RecipientJson } from '../db/schema.js';
+import { emailAttachments, emails, sourceUidAliases, type NewEmailRow, type RecipientJson } from '../db/schema.js';
 import { projectRules, type ProjectRule } from '../config.js';
 import { normalizeMessageId, stripHtml } from '../utils/mail.js';
 import { acct } from '../account.js';
@@ -55,6 +55,25 @@ export function classifyProject(text: string, rules: ProjectRule[] = projectRule
   return null;
 }
 
+/**
+ * Postgres 에 넣을 수 없는 문자를 뺀다: NUL(U+0000)은 text 열·jsonb 모두 거부한다
+ * ("invalid byte sequence for encoding UTF8: 0x00"). 문자열·배열·객체를 재귀로 정리한다.
+ */
+export function stripNul<T>(v: T): T {
+  if (typeof v === 'string') return (v.includes('\u0000') ? v.replace(/\u0000/g, '') : v) as T;
+  if (Array.isArray(v)) return v.map((x) => stripNul(x)) as T;
+  if (v && typeof v === 'object' && !(v instanceof Date) && !Buffer.isBuffer(v)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = stripNul(x);
+    return out as T;
+  }
+  return v;
+}
+
+/** btree 색인 열의 상한(Postgres 행 2,704바이트, 한글 3바이트) 안으로 자른다 */
+export const INDEXED_TEXT_MAX = 500;
+const clip = (s: string, max = INDEXED_TEXT_MAX) => (s.length > max ? s.slice(0, max) : s);
+
 export function fingerprint(parts: string[]): string {
   return crypto.createHash('sha256').update(parts.join('\u0001')).digest('hex');
 }
@@ -62,7 +81,7 @@ export function fingerprint(parts: string[]): string {
 /** mailparser 결과를 emails 행으로 변환한다 (DB 접근 없음). */
 export function prepareEmail(parsed: ParsedMail, opts: StoreOptions): PreparedEmail {
   const from = addressesOf(parsed.from, 'to')[0];
-  const senderEmail = from?.address || '';
+  const senderEmail = clip(from?.address || '', 320);
   const sender = parsed.from?.text || senderEmail;
   const recipients = [
     ...addressesOf(parsed.to, 'to'),
@@ -73,13 +92,14 @@ export function prepareEmail(parsed: ParsedMail, opts: StoreOptions): PreparedEm
   const subject = (parsed.subject || '').trim();
   const bodyText = (parsed.text && parsed.text.trim()) || (parsed.html ? stripHtml(parsed.html) : '');
   const sentAt = parsed.date && !Number.isNaN(parsed.date.getTime()) ? parsed.date : null;
-  const messageId = normalizeMessageId(parsed.messageId) || null;
+  const rawMessageId = normalizeMessageId(parsed.messageId).replace(/\u0000/g, '');
+  const messageId = rawMessageId ? clip(rawMessageId) : null;
 
   const direction: Direction =
     opts.direction ?? (opts.selfEmail && senderEmail === opts.selfEmail.toLowerCase() ? 'sent' : 'received');
 
-  const dedupKey = messageId
-    ? `mid:${messageId}`
+  const dedupKey = rawMessageId
+    ? rawMessageId.length > INDEXED_TEXT_MAX ? `mid#${fingerprint([rawMessageId])}` : `mid:${rawMessageId}`
     : `fp:${fingerprint([senderEmail, recipientEmails.slice().sort().join(','), subject, sentAt?.toISOString() || '', bodyText.slice(0, 2000)])}`;
 
   const refs = Array.isArray(parsed.references) ? parsed.references : parsed.references ? [parsed.references] : [];
@@ -106,7 +126,7 @@ export function prepareEmail(parsed: ParsedMail, opts: StoreOptions): PreparedEm
     receivedAt: opts.receivedAt ?? (direction === 'received' ? sentAt : null),
     hasAttachments: attachments.length > 0,
     sizeBytes: opts.sizeBytes ?? null,
-    threadKey: threadKeyOf(subject),
+    threadKey: clip(threadKeyOf(subject)),
     inReplyTo: normalizeMessageId(parsed.inReplyTo) || null,
     references: refs.map((r) => normalizeMessageId(r)).filter(Boolean),
     projectName: classifyProject(`${subject}\n${bodyText.slice(0, 2000)}`),
@@ -121,6 +141,7 @@ export interface InsertResult {
 
 /** 중복이면 건너뛰고(inserted=false), 새 메일이면 첨부 메타까지 저장한다. */
 export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<InsertResult> {
+  prepared = stripNul(prepared);
   return db.transaction(async (tx) => {
     const account = acct();
     const rows = await tx.insert(emails).values({ ...prepared.row, account }).onConflictDoNothing().returning({ id: emails.id });
@@ -139,6 +160,12 @@ export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<Inse
             .update(emails)
             .set({ source: prepared.row.source, sourceUid: prepared.row.sourceUid })
             .where(and(eq(emails.id, e.id), sql`${emails.sourceUid} is null`));
+        } else if (e && e.sourceUid !== prepared.row.sourceUid) {
+          // 같은 메일이 다른 uid 로 이미 저장됨 (메일함에 두 통). 이 uid 도 받은 것으로 남겨 다시 내려받지 않게 한다.
+          await tx
+            .insert(sourceUidAliases)
+            .values({ account, source: prepared.row.source, sourceUid: prepared.row.sourceUid, emailId: e.id })
+            .onConflictDoNothing();
         }
         return { id: e?.id ?? null, inserted: false };
       }
@@ -151,12 +178,22 @@ export async function insertEmail(db: Db, prepared: PreparedEmail): Promise<Inse
   });
 }
 
-/** 이미 저장된 POP3 uid 집합 */
+/** 이미 저장된 POP3 uid 집합 (다른 uid 로 저장된 같은 메일의 추가 uid 포함) */
 export async function knownSourceUids(db: Db, source: string, uids: string[]): Promise<Set<string>> {
   if (uids.length === 0) return new Set();
-  const rows = await db
-    .select({ uid: emails.sourceUid })
-    .from(emails)
-    .where(and(eq(emails.account, acct()), eq(emails.source, source), inArray(emails.sourceUid, uids)));
-  return new Set(rows.map((r) => r.uid).filter((u): u is string => Boolean(u)));
+  const account = acct();
+  const known = new Set<string>();
+  // UIDL 은 수천 개가 될 수 있어 나눠서 묻는다 (바인드 변수 한도)
+  for (let i = 0; i < uids.length; i += 5000) {
+    const part = uids.slice(i, i + 5000);
+    const [rows, aliases] = await Promise.all([
+      db.select({ uid: emails.sourceUid }).from(emails).where(and(eq(emails.account, account), eq(emails.source, source), inArray(emails.sourceUid, part))),
+      db
+        .select({ uid: sourceUidAliases.sourceUid })
+        .from(sourceUidAliases)
+        .where(and(eq(sourceUidAliases.account, account), eq(sourceUidAliases.source, source), inArray(sourceUidAliases.sourceUid, part))),
+    ]);
+    for (const r of [...rows, ...aliases]) if (r.uid) known.add(r.uid);
+  }
+  return known;
 }

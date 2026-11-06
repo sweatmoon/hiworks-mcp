@@ -107,6 +107,29 @@ export const emailAttachments = pgTable(
   (t) => [index('email_attachments_email_id_idx').on(t.emailId)]
 );
 
+/**
+ * 이미 다른 uid 로 저장된 메일의 추가 uid.
+ * 같은 Message-ID 메일이 메일함에 두 통 있으면(받는사람+숨은참조로 자기에게, 메일링 중복 배달 등) 두 번째 uid 는
+ * emails.source_uid 에 넣을 자리가 없다. 여기에 남겨 두지 않으면 매 동기화마다 다시 내려받고 건너뛰게 된다.
+ */
+export const sourceUidAliases = pgTable(
+  'source_uid_aliases',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    account: text('account').notNull().default('main'),
+    source: text('source').notNull(),
+    sourceUid: text('source_uid').notNull(),
+    emailId: bigint('email_id', { mode: 'number' })
+      .notNull()
+      .references(() => emails.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('source_uid_aliases_account_source_uid_uq').on(t.account, t.source, t.sourceUid),
+    index('source_uid_aliases_email_id_idx').on(t.emailId),
+  ]
+);
+
 export const emailSyncState = pgTable('email_sync_state', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   account: text('account').notNull().default('main'),
