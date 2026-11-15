@@ -262,9 +262,16 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
   const password = String(form['password'] || '');
   let acc: Account | null = null;
   if (known && !known.selfService) {
-    // 관리자가 등록한 계정: 연결 비밀번호. 계정이 없을 때도 같은 비교를 해서 응답 시간으로 계정 유무를 알 수 없게 한다
+    // 관리자가 등록한 계정: 연결 비밀번호, 또는 서버에 이미 있는 그 계정의 하이웍스 메일 비밀번호(2026-11-16 —
+    // 로그인 화면이 "@activo.kr 은 메일 비밀번호로"라고 안내하는데 변수 계정은 연결 비밀번호만 받아 주인이 막혔다).
+    // 메일 비밀번호는 저장된 값과 비교만 하고 하이웍스에 묻지 않는다(틀려도 하이웍스 계정 잠김 없음).
     const expected = known.loginPassword.length >= MIN_PASSWORD ? known.loginPassword : crypto.randomBytes(24).toString('hex');
-    if (safeEqual(password, expected) && expected === known.loginPassword) acc = known;
+    // 화면이 메일 비밀번호를 안내하는 도메인(스스로 등록 허용)일 때만. 스스로 등록이 꺼져 있으면 예전처럼 연결 비밀번호만
+    const mailAllowed = Boolean(known.password) && selfSignupEnabled() && emailAllowed(email);
+    const mailPw = mailAllowed ? known.password : crypto.randomBytes(24).toString('hex');
+    const okConnect = safeEqual(password, expected) && expected === known.loginPassword;
+    const okMail = safeEqual(password, mailPw) && mailAllowed && mailPw === known.password && password.length > 0;
+    if (okConnect || okMail) acc = known;
   } else if (password && selfSignupEnabled() && emailAllowed(email)) {
     // 스스로 등록(또는 이미 등록한 사람이 다시 로그인): 하이웍스 POP3 로 실제 로그인해 확인 → 등록·비밀번호 갱신
     // 메일 주소는 대소문자를 가리지 않으므로 소문자로 하이웍스에 확인·저장한다

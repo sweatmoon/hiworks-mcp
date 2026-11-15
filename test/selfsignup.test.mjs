@@ -7,7 +7,9 @@ import net from 'net';
 
 // 사용자별 비밀번호를 바꿀 수 있는 작은 POP3 목 서버
 const MAILBOX_PW = { 'new@hiworks.com': 'mail-pw-1', 'owner@hiworks.com': 'secret', 'staff@hiworks.com': 'staff-mail-pw' };
+let popLogins = 0;
 const pop = net.createServer((sock) => {
+  popLogins++;
   let user = '';
   sock.write('+OK ready\r\n');
   let buf = '';
@@ -146,8 +148,15 @@ test('허용 도메인이 아니면 등록 불가, 관리자가 등록한 계정
   assert.equal((await login('x@other.com', 'pw')).status, 401);
   assert.ok(!(await rows()).some((r) => r.email === 'x@other.com'));
   resetLoginLimits();
-  // staff 는 Railway 변수 계정: 메일 비밀번호로는 안 되고 연결 비밀번호로만
-  assert.equal((await login('staff@hiworks.com', 'staff-mail-pw')).status, 401);
+  // staff 는 Railway 변수 계정: 연결 비밀번호 또는 서버에 있는 그 계정의 메일 비밀번호(하이웍스에 묻지 않음)
+  const popBefore = popLogins;
+  const viaMail = await login('staff@hiworks.com', 'staff-mail-pw');
+  assert.equal(viaMail.status, 302);
+  assert.equal((await accountByAccessToken(viaMail.tokens.access_token)).key, 'staff');
+  assert.equal(popLogins, popBefore, '변수 계정 메일 비밀번호는 저장값과 비교만 (POP3 접속 없음)');
+  assert.equal((await login('staff@hiworks.com', 'wrong-password-1')).status, 401);
+  assert.equal(popLogins, popBefore);
+  resetLoginLimits();
   const s = await login('staff@hiworks.com', 'staff-connect-pass-99');
   assert.equal(s.status, 302);
   assert.equal((await accountByAccessToken(s.tokens.access_token)).key, 'staff');
