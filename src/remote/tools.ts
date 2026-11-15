@@ -19,6 +19,8 @@ import { formatKST } from '../utils/date.js';
 import { acct, selfEmail } from '../account.js';
 import { registerTaskTools } from './tools-tasks.js';
 import { sendDraftToSelf } from '../drafts.js';
+import { activeGrantsFor, asDelegate } from '../delegate.js';
+import { currentAccount } from '../account.js';
 
 const dateShape = {
   since: z.string().describe('시작일 (포함). YYYY-MM-DD (KST) 또는 ISO 8601'),
@@ -437,6 +439,87 @@ export function buildMcpServer(): McpServer {
       }
     }
   );
+
+  // 위임 읽기: 메일함 주인이 동의하고 관리자가 DELEGATE_READ 에 기한을 넣은 계정만, 읽기 전용 (2026-11-16)
+  let grants: ReturnType<typeof activeGrantsFor> = [];
+  try {
+    grants = activeGrantsFor(currentAccount().key);
+  } catch {
+    grants = [];
+  }
+  if (grants.length) {
+    const targets = grants.map((g) => `${g.target}(${g.untilText}까지)`).join(', ');
+    const accountArg = z.string().describe(`읽을 계정 키. 위임된 계정: ${targets}`);
+    const note = `메일함 주인이 동의해 기한을 정해 위임한 계정만 읽기 전용으로 봅니다(위임: ${targets}). 결과를 그 사람 동의 범위 밖으로 옮기지 마세요.`;
+    server.registerTool(
+      'delegate_search_emails',
+      {
+        title: '위임 계정 메일 검색',
+        description: `위임받은 다른 계정의 메일을 검색합니다(search_emails 와 같은 조건). ${note}`,
+        inputSchema: { account: accountArg, ...searchShape, direction: z.enum(['sent', 'received']).optional() },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async ({ account, ...params }) => {
+        try {
+          return jsonResult({ success: true, account, ...(await asDelegate(account, 'search', () => searchEmails(db, params))) });
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+    );
+    server.registerTool(
+      'delegate_read_email',
+      {
+        title: '위임 계정 메일 읽기',
+        description: `위임받은 다른 계정의 메일 한 통(본문·첨부 목록)을 읽습니다. ${note}`,
+        inputSchema: {
+          account: accountArg,
+          id: z.number().int().describe('delegate_search_emails 결과의 id'),
+          maxLength: z.number().int().min(0).optional().describe('본문 최대 글자 수 (기본 20000, 0이면 무제한)'),
+          includeThread: z.boolean().optional(),
+        },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async ({ account, id, maxLength, includeThread }) => {
+        try {
+          return jsonResult(
+            await asDelegate(account, 'read', async () => {
+              const email = await getEmailById(db, id, { maxLength });
+              if (!email) return { success: false, error: `메일을 찾을 수 없습니다: ${id}` };
+              const thread = includeThread ? await getThread(db, email.threadKey) : undefined;
+              return { success: true, account, email, thread };
+            })
+          );
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+    );
+    server.registerTool(
+      'delegate_read_attachment',
+      {
+        title: '위임 계정 첨부 읽기',
+        description: `위임받은 다른 계정 메일의 첨부 텍스트를 읽습니다(read_attachment 와 같음 — 그 계정 메일함에서 원본을 다시 받아 읽고 저장하지 않음). ${note}`,
+        inputSchema: {
+          account: accountArg,
+          emailId: z.number().int(),
+          attachmentId: z.number().int().optional(),
+          index: z.number().int().min(0).optional(),
+          filename: z.string().optional(),
+          offset: z.number().int().min(0).optional(),
+          maxChars: z.number().int().min(1000).max(200000).optional(),
+        },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async ({ account, ...params }) => {
+        try {
+          return jsonResult(await asDelegate(account, 'attachment', () => readAttachment(db, params)));
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+    );
+  }
 
   // 최근 메일 1건 확인용 보조 (연결 점검)
   server.registerTool(
