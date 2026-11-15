@@ -11,6 +11,7 @@ import { sql } from 'drizzle-orm';
 import { PACKAGE_VERSION, log, serviceConfig } from '../config.js';
 import { closeDb, getDb } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
+import { refreshRegisteredAccounts, selfSignupEnabled } from '../registered.js';
 import { importFile, type ImportProgress } from '../sync/import.js';
 import { listSyncStates } from '../sync/state.js';
 import { authorizedAccount } from './auth.js';
@@ -194,6 +195,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   await runMigrations();
+  // 스스로 등록한 계정을 읽어 둔다(1분마다 다시). worker 와 같은 DB 표
+  const reloadRegistered = () => refreshRegisteredAccounts(getDb()).catch((e) => console.error('등록 계정 읽기 실패:', e instanceof Error ? e.message : e));
+  await reloadRegistered();
+  setInterval(() => void reloadRegistered(), 60_000).unref();
+  if (selfSignupEnabled()) console.error('스스로 등록 켜짐 (SELF_SIGNUP_DOMAINS)');
   const server = createHttpServer();
   // 호스트를 지정하지 않으면 '::' 듀얼스택으로 IPv4·IPv6 모두 받는다 (Railway 프록시는 IPv6 로 접속한다)
   server.listen(serviceConfig.port, () => {

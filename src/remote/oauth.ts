@@ -4,6 +4,7 @@ import { and, eq, gt, isNull, lt, sql } from 'drizzle-orm';
 import { getDb } from '../db/client.js';
 import { oauthClients, oauthCodes, oauthTokens } from '../db/schema.js';
 import { accountByEmail, accountByKey, type Account } from '../account.js';
+import { emailAllowed, selfSignupDomains, selfSignupEnabled, upsertRegisteredAccount, verifyMailLogin } from '../registered.js';
 import { log } from '../config.js';
 import { publicBaseUrl } from '../attachments/download.js';
 
@@ -193,10 +194,11 @@ button{margin-top:18px;width:100%;padding:11px;border:0;border-radius:8px;backgr
 .err{color:#b91c1c;font-size:13px;margin:0 0 8px}</style></head><body><main>
 <h1>hiworks 메일 연결</h1>
 <p>${esc(clientName || 'Claude')} 에서 이 메일함에 접속하려고 합니다. 메일함 주인만 로그인할 수 있습니다.</p>
+${selfSignupEnabled() ? `<p><b>${esc(selfSignupDomains().map((d) => '@' + d).join(', '))}</b> 메일은 <b>하이웍스 메일 비밀번호</b>로 로그인하세요(처음이면 자동 등록, 본인 메일만 보입니다). 관리자가 따로 알려 준 연결 비밀번호가 있으면 그것을 넣으세요.</p>` : ''}
 ${message ? `<p class="err">${esc(message)}</p>` : ''}
 <form method="post" action="/oauth/authorize" autocomplete="off">${hidden}
 <label for="email">메일 주소</label><input id="email" name="email" type="email" required autofocus>
-<label for="password">연결 비밀번호</label><input id="password" name="password" type="password" required>
+<label for="password">${selfSignupEnabled() ? '비밀번호' : '연결 비밀번호'}</label><input id="password" name="password" type="password" required>
 <button type="submit">로그인하고 연결</button></form></main></body></html>`;
   res.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
@@ -255,15 +257,35 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
     log(`oauth login locked (ip=${ip})`);
     return loginPage(res, p, v.clientName, '로그인 실패가 많아 잠시 막혔습니다. 나중에 다시 시도하세요.', 429);
   }
-  const acc: Account | null = accountByEmail(String(form['email'] || ''));
+  const email = String(form['email'] || '').trim();
+  const known: Account | null = accountByEmail(email);
   const password = String(form['password'] || '');
-  // 계정이 없을 때도 같은 비교를 해서 응답 시간으로 계정 유무를 알 수 없게 한다
-  const expected = acc && acc.loginPassword.length >= MIN_PASSWORD ? acc.loginPassword : crypto.randomBytes(24).toString('hex');
-  const good = safeEqual(password, expected) && Boolean(acc) && expected === acc!.loginPassword;
-  if (!good || !acc) {
+  let acc: Account | null = null;
+  if (known && !known.selfService) {
+    // 관리자가 등록한 계정: 연결 비밀번호. 계정이 없을 때도 같은 비교를 해서 응답 시간으로 계정 유무를 알 수 없게 한다
+    const expected = known.loginPassword.length >= MIN_PASSWORD ? known.loginPassword : crypto.randomBytes(24).toString('hex');
+    if (safeEqual(password, expected) && expected === known.loginPassword) acc = known;
+  } else if (password && selfSignupEnabled() && emailAllowed(email)) {
+    // 스스로 등록(또는 이미 등록한 사람이 다시 로그인): 하이웍스 POP3 로 실제 로그인해 확인 → 등록·비밀번호 갱신
+    // 메일 주소는 대소문자를 가리지 않으므로 소문자로 하이웍스에 확인·저장한다
+    const mailbox = email.toLowerCase();
+    const check = await verifyMailLogin(mailbox, password);
+    if (check.ok) {
+      const r = await upsertRegisteredAccount(getDb(), mailbox, password);
+      acc = accountByEmail(mailbox);
+      log(`oauth self-signup ${r.created ? 'registered' : 'refreshed'} (account=${r.key})`);
+    } else if (!check.auth) {
+      log(`oauth self-signup pop3 error (ip=${ip}): ${check.message.slice(0, 120)}`);
+      return loginPage(res, p, v.clientName, '하이웍스 메일 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (웹메일 → 환경설정 → POP3/SMTP 사용이 켜져 있어야 합니다)', 502);
+    }
+  } else {
+    safeEqual(password, crypto.randomBytes(24).toString('hex'));
+  }
+  if (!acc) {
     recordFailure(ip);
     log(`oauth login failed (ip=${ip})`);
-    return loginPage(res, p, v.clientName, '메일 주소 또는 연결 비밀번호가 맞지 않습니다.', 401);
+    const hint = selfSignupEnabled() ? '메일 주소 또는 비밀번호가 맞지 않습니다. 하이웍스 메일 비밀번호를 여러 번 틀리면 하이웍스 계정이 잠길 수 있으니 주의하세요.' : '메일 주소 또는 연결 비밀번호가 맞지 않습니다.';
+    return loginPage(res, p, v.clientName, hint, 401);
   }
   const code = randomToken();
   await getDb().insert(oauthCodes).values({
@@ -346,6 +368,6 @@ export async function accountByAccessToken(token: string): Promise<Account | nul
     .limit(1);
   if (!row) return null;
   const acc = accountByKey(row.account);
-  if (!acc || acc.loginPassword.length < MIN_PASSWORD || passwordFingerprint(acc.loginPassword) !== row.pwFp) return null;
+  if (!acc || (!acc.selfService && acc.loginPassword.length < MIN_PASSWORD) || passwordFingerprint(acc.loginPassword) !== row.pwFp) return null;
   return acc;
 }

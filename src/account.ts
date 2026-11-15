@@ -6,6 +6,7 @@ import { log } from './config.js';
  * 메일함 계정. 서버 하나가 여러 사람의 메일함을 나눠 담는다 (중앙 관리).
  *  - main: 기존 변수 HIWORKS_USERNAME / HIWORKS_PASSWORD / MCP_AUTH_TOKEN / OAUTH_LOGIN_PASSWORD
  *  - 그 밖: ACCOUNT_<KEY>_USERNAME / ACCOUNT_<KEY>_PASSWORD / ACCOUNT_<KEY>_TOKEN / ACCOUNT_<KEY>_OAUTH_PASSWORD (KEY 는 영문 대문자·숫자·_)
+ *  - 스스로 등록: SELF_SIGNUP_DOMAINS 메일이 연결 화면에서 본인 메일 비밀번호로 로그인하면 registered_accounts 에 (registered.ts)
  * OAuth 로그인 비밀번호가 있는 계정만 claude.ai 커넥터 로그인(OAuth)으로 접속할 수 있다.
  * 접속 토큰으로 계정을 가리고, DB 의 모든 행은 account 열로 나뉜다.
  */
@@ -18,6 +19,17 @@ export interface Account {
   token: string;
   /** OAuth 로그인 화면에서 쓰는 비밀번호 (12자 이상, 없으면 OAuth 로그인 불가) */
   loginPassword: string;
+  /**
+   * 스스로 등록한 계정(registered_accounts): 로그인 비밀번호 = 하이웍스 메일 비밀번호(길이 제한 없음, 로그인 때 POP3 로 확인).
+   * 관리자가 Railway 에 넣은 계정은 false.
+   */
+  selfService?: boolean;
+}
+
+/** 스스로 등록한 계정 목록 (DB 에서 읽어 메모리에 둔다 — registered.ts 가 채움) */
+let registered: Account[] = [];
+export function setRegisteredAccounts(list: Account[]): void {
+  registered = list;
 }
 
 export const MAIN_ACCOUNT = 'main';
@@ -75,6 +87,11 @@ export function listAccounts(env: NodeJS.ProcessEnv = process.env, opts: { requi
       warn(`계정 ${key}: 다른 계정과 메일 주소가 같아 건너뜁니다`);
       continue;
     }
+    out.push(acc);
+  }
+  // 스스로 등록한 계정: 환경변수 계정과 키·주소가 겹치면 환경변수 쪽을 쓴다
+  for (const acc of registered) {
+    if (out.some((a) => a.key === acc.key || a.username.toLowerCase() === acc.username.toLowerCase())) continue;
     out.push(acc);
   }
   return out;
