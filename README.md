@@ -38,6 +38,7 @@ Claude Code / ChatGPT ──HTTPS──▶ mcp-server (/mcp, /health, /import)
 | `read_email` | 본문·첨부 목록, 스레드 |
 | `read_attachment` | 첨부 하나의 텍스트 (PDF·DOCX·PPTX·XLSX·HWPX·TXT). 하이웍스 메일함에서 원본을 다시 받아 읽고 저장하지 않음 |
 | `attachment_download_link` | 첨부 원본 파일 일회용 다운로드 링크 (`/dl/<토큰>`, 1회·10분). 여는 순간 메일함에서 받아 넘기고 저장하지 않음. 링크 주소는 `PUBLIC_BASE_URL`, 없으면 Railway 의 `RAILWAY_PUBLIC_DOMAIN` |
+| `create_draft` | 메일 초안을 **본인 받은편지함에만** `[초안] 제목` 메일로 넣음 — 아무에게도 보내지 않음(실제 수신자는 코드에서 본인으로 고정). 적은 받는 사람·참조(외부 가능)는 초안 맨 위 안내에만. 첨부: 메일 첨부(`emailId`+`attachmentId`/`index`/`filename`) 또는 `DRAFT_URL_HOSTS` 의 https 주소(NAS 커넥터 `download_link`), 10개·합계 `DRAFT_MAX_MB`(기본 20)MB·시간당 `DRAFT_PER_HOUR`(기본 30)통. 하이웍스는 IMAP 이 없어 임시보관함에 직접 못 넣으므로, 사용자가 그 메일을 [전달] → 받는 사람 넣고 → 안내 칸 지우고 보냄. 동기화 때 보낸 메일로 세지 않음 |
 | `get_email_statistics` | 발신·수신 건수, 일/주/월 추이, 주요 상대, 사업별 건수, 미처리 요청 후보 |
 | `extract_work_activities` | 날짜별 업무 활동 추출 (LLM 또는 규칙), work_activities 저장 |
 | `generate_daily_worklog` / `get_daily_worklog` | 업무일지 생성(Markdown+JSON, daily_worklogs 저장) / 조회 |

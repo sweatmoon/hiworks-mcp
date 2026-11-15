@@ -18,6 +18,7 @@ import { errorResult, jsonResult } from '../tools/common.js';
 import { formatKST } from '../utils/date.js';
 import { acct, selfEmail } from '../account.js';
 import { registerTaskTools } from './tools-tasks.js';
+import { sendDraftToSelf } from '../drafts.js';
 
 const dateShape = {
   since: z.string().describe('시작일 (포함). YYYY-MM-DD (KST) 또는 ISO 8601'),
@@ -390,6 +391,47 @@ export function buildMcpServer(): McpServer {
           url: `email://${email.id}`,
           metadata: { direction: email.direction, project: email.projectName, attachments: email.attachments.map((a) => a.filename) },
         });
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  // 메일 초안: 남에게 보내지 않고 본인 메일함에만 넣는다 (2026-11-15 사용자 결정)
+  const attachmentRef = z
+    .object({
+      emailId: z.number().int().optional().describe('첨부를 가져올 메일 id (search_emails 결과의 id)'),
+      attachmentId: z.number().int().optional().describe('read_attachment 와 같은 첨부 id'),
+      index: z.number().int().min(0).optional().describe('메일 안 첨부 순서 (0부터)'),
+      filename: z.string().optional().describe('메일 안 첨부 파일 이름'),
+      url: z.string().optional().describe('또는 https 주소 (허용된 호스트만 — 예: NAS 커넥터 download_link 가 준 주소)'),
+      name: z.string().optional().describe('첨부 이름 바꾸기 (선택)'),
+    })
+    .describe('메일 첨부(emailId + attachmentId|index|filename) 또는 url 하나');
+  server.registerTool(
+    'create_draft',
+    {
+      title: '메일 초안 만들기 (나에게만)',
+      description:
+        '메일 초안을 만들어 **본인 받은편지함에만** "[초안] 제목" 메일로 넣습니다. 아무에게도 보내지 않습니다 — 실제 수신자는 코드에서 본인 주소로 고정됩니다. ' +
+        'to/cc/bcc 에 적은 주소(외부 주소 가능)는 초안 맨 위 안내에만 적힙니다. 사용자는 하이웍스에서 그 메일을 열어 [전달] → 받는 사람 넣기 → 안내 칸 지우고 고쳐서 보냅니다(첨부는 전달에 따라감). ' +
+        '첨부: 하이웍스 메일의 첨부(emailId + attachmentId|index|filename) 또는 허용된 https 주소(NAS 커넥터 download_link — 일회용이라 새로 만든 주소를 바로 넘길 것), 10개·합계 20MB까지. ' +
+        '답장 초안이면 replyToEmailId 로 원래 메일과 같은 스레드에 묶습니다. 수정은 고친 내용으로 새 초안을 다시 만듭니다(이전 초안은 사용자가 지움). ' +
+        '보내기 전에 사용자에게 받는 사람·제목·본문을 보여 주고 만드세요.',
+      inputSchema: {
+        to: z.array(z.string()).min(1).describe('보낼 받는 사람 주소 (초안 안내에만 적힘)'),
+        cc: z.array(z.string()).optional().describe('참조 (초안 안내에만 적힘)'),
+        bcc: z.array(z.string()).optional().describe('숨은참조 (초안 안내에만 적힘)'),
+        subject: z.string().describe('제목 ("[초안] " 이 앞에 붙음)'),
+        body: z.string().describe('본문 (일반 글)'),
+        replyToEmailId: z.number().int().optional().describe('답장 초안이면 원래 메일 id'),
+        attachments: z.array(attachmentRef).max(10).optional(),
+      },
+      annotations: { title: '메일 초안 만들기 (나에게만)', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async (params) => {
+      try {
+        return jsonResult(await sendDraftToSelf(db, params));
       } catch (error) {
         return errorResult(error);
       }
