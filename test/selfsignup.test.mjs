@@ -154,8 +154,17 @@ test('허용 도메인이 아니면 등록 불가, 관리자가 등록한 계정
   assert.equal(viaMail.status, 302);
   assert.equal((await accountByAccessToken(viaMail.tokens.access_token)).key, 'staff');
   assert.equal(popLogins, popBefore, '변수 계정 메일 비밀번호는 저장값과 비교만 (POP3 접속 없음)');
-  assert.equal((await login('staff@hiworks.com', 'wrong-password-1')).status, 401);
-  assert.equal(popLogins, popBefore);
+  // 저장값과 다르면 하이웍스에 직접 확인: 바뀐 비밀번호는 통과(변수는 그대로), 틀린 비밀번호는 401
+  MAILBOX_PW['staff@hiworks.com'] = 'staff-new-pw';
+  try {
+    const changed = await login('staff@hiworks.com', 'staff-new-pw');
+    assert.equal(changed.status, 302);
+    assert.equal(popLogins, popBefore + 1);
+    assert.equal(process.env.ACCOUNT_STAFF_PASSWORD, 'staff-mail-pw', '변수는 바꾸지 않음');
+    assert.equal((await login('staff@hiworks.com', 'wrong-password-1')).status, 401);
+  } finally {
+    MAILBOX_PW['staff@hiworks.com'] = 'staff-mail-pw';
+  }
   resetLoginLimits();
   const s = await login('staff@hiworks.com', 'staff-connect-pass-99');
   assert.equal(s.status, 302);
