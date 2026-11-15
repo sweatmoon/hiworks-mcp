@@ -95,8 +95,10 @@ export function prepareEmail(parsed: ParsedMail, opts: StoreOptions): PreparedEm
   const rawMessageId = normalizeMessageId(parsed.messageId).replace(/\u0000/g, '');
   const messageId = rawMessageId ? clip(rawMessageId) : null;
 
+  // MCP 가 본인에게 넣은 초안(X-Hiworks-MCP-Draft)은 보낸 메일로 세지 않는다 — 받은편지함의 초안일 뿐
+  const isDraft = Boolean(parsed.headers?.get?.('x-hiworks-mcp-draft'));
   const direction: Direction =
-    opts.direction ?? (opts.selfEmail && senderEmail === opts.selfEmail.toLowerCase() ? 'sent' : 'received');
+    opts.direction ?? (!isDraft && opts.selfEmail && senderEmail === opts.selfEmail.toLowerCase() ? 'sent' : 'received');
 
   const dedupKey = rawMessageId
     ? rawMessageId.length > INDEXED_TEXT_MAX ? `mid#${fingerprint([rawMessageId])}` : `mid:${rawMessageId}`
