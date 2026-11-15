@@ -249,6 +249,20 @@ export type NewTaskRow = typeof tasks.$inferInsert;
 
 // ---- OAuth (claude.ai 커넥터 로그인) ----
 /** 동적 등록(DCR)한 OAuth 클라이언트. 공개 클라이언트(PKCE)만 받는다 */
+/**
+ * 스스로 등록한 메일 계정 (2026-11-15). SELF_SIGNUP_DOMAINS(예: activo.kr) 메일이면 claude.ai 커넥터 연결 화면에서
+ * 본인 하이웍스 메일 비밀번호로 로그인해 바로 등록된다. 관리자가 Railway 변수에 넣는 계정(ACCOUNT_<KEY>_*)과 별개.
+ * mail-worker 가 10분마다 메일을 받아야 해서 비밀번호를 보관하되, ACCOUNT_SECRET 으로 AES-256-GCM 암호화해 둔다.
+ */
+export const registeredAccounts = pgTable('registered_accounts', {
+  key: text('key').primaryKey(),
+  email: text('email').notNull().unique(),
+  passwordEnc: text('password_enc').notNull(),
+  disabled: boolean('disabled').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const oauthClients = pgTable('oauth_clients', {
   clientId: text('client_id').primaryKey(),
   clientName: text('client_name').notNull().default(''),

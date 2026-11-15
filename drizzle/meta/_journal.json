@@ -36,6 +36,13 @@
       "when": 1793670318913,
       "tag": "0004_source_uid_aliases",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794755345271,
+      "tag": "0005_registered_accounts",
+      "breakpoints": true
     }
   ]
 }

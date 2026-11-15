@@ -9,6 +9,7 @@ import { sql } from 'drizzle-orm';
 import { PACKAGE_VERSION, log, serviceConfig } from '../config.js';
 import { closeDb, getDb } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
+import { refreshRegisteredAccounts } from '../registered.js';
 import { emails } from '../db/schema.js';
 import { listAccounts, withAccount, type Account } from '../account.js';
 import { runSync, type SyncSummary } from '../sync/runner.js';
@@ -51,6 +52,8 @@ async function tick(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // 스스로 등록한 계정을 새로 읽는다(연결 화면에서 막 등록한 사람도 이번 주기에 동기화)
+    await refreshRegisteredAccounts(getDb()).catch((e) => console.error('등록 계정 읽기 실패:', e instanceof Error ? e.message : e));
     // 계정마다 차례로 동기화한다. 한 계정이 실패해도 다른 계정은 계속한다.
     const summaries: Record<string, SyncSummary> = {};
     for (const account of syncAccounts()) {
@@ -111,6 +114,7 @@ function startHealthServer(): http.Server {
 
 async function main(): Promise<void> {
   await runMigrations();
+  await refreshRegisteredAccounts(getDb());
   // 이전 컨테이너가 끝맺지 못한 실행 기록 정리 (다른 프로세스가 동기화 중이면 잠금 때문에 건너뜀)
   const accounts = syncAccounts();
   for (const account of accounts) {
