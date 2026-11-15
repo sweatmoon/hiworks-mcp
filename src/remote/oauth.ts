@@ -272,6 +272,18 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
     const okConnect = safeEqual(password, expected) && expected === known.loginPassword;
     const okMail = safeEqual(password, mailPw) && mailAllowed && mailPw === known.password && password.length > 0;
     if (okConnect || okMail) acc = known;
+    else if (mailAllowed && password) {
+      // 저장된 메일 비밀번호와 다르면(비밀번호를 바꿨는데 변수는 예전 값 등) 하이웍스 POP3 에 직접 로그인해 확인한다
+      // (2026-11-16 운영: 주인이 맞는 비밀번호를 넣었는데 저장값과 달라 거부됨). 저장값·변수는 바꾸지 않는다
+      const check = await verifyMailLogin(known.username.toLowerCase(), password);
+      if (check.ok) {
+        acc = known;
+        log(`oauth env account mail password verified via pop3 (account=${known.key}; stored password differs)`);
+      } else if (!check.auth) {
+        log(`oauth env account pop3 error (ip=${ip}): ${check.message.slice(0, 120)}`);
+        return loginPage(res, p, v.clientName, '하이웍스 메일 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (웹메일 → 환경설정 → POP3/SMTP 사용이 켜져 있어야 합니다)', 502);
+      }
+    }
   } else if (password && selfSignupEnabled() && emailAllowed(email)) {
     // 스스로 등록(또는 이미 등록한 사람이 다시 로그인): 하이웍스 POP3 로 실제 로그인해 확인 → 등록·비밀번호 갱신
     // 메일 주소는 대소문자를 가리지 않으므로 소문자로 하이웍스에 확인·저장한다
