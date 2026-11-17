@@ -1,6 +1,6 @@
 import type Mail from 'nodemailer/lib/mailer/index.js';
 import type { Db } from './db/client.js';
-import { currentAccount } from './account.js';
+import { currentAccount, withAccount, type Account } from './account.js';
 import { createTransporter } from './services/smtp.js';
 import { fetchAttachment } from './attachments/read.js';
 import { getEmailById } from './search/query.js';
@@ -118,7 +118,12 @@ export function resetDraftLimits(): void {
   sentLog.clear();
 }
 
-export async function sendDraftToSelf(db: Db, input: DraftInput): Promise<Record<string, unknown>> {
+export interface DraftOptions {
+  /** 한 연결에서 여러 메일함일 때: 첨부 메일 id 가 든 메일함(그 메일함 POP3 에서 원본을 받는다) */
+  resolveEmailOwner?: (emailId: number) => Promise<Account | null>;
+}
+
+export async function sendDraftToSelf(db: Db, input: DraftInput, opts: DraftOptions = {}): Promise<Record<string, unknown>> {
   const account = currentAccount();
   if (!account.username || !account.password) throw new Error('이 계정의 하이웍스 주소·비밀번호가 서버에 없어 초안을 보낼 수 없습니다.');
   const self = account.username.toLowerCase();
@@ -161,7 +166,9 @@ export async function sendDraftToSelf(db: Db, input: DraftInput): Promise<Record
       attachments.push({ filename: a.filename, content: a.content, contentType: a.contentType });
       attachedInfo.push({ name: String(a.filename), sizeKB: Math.round(a.size / 1024), from: '주소' });
     } else if (ref.emailId !== undefined) {
-      const r = await fetchAttachment(db, { emailId: ref.emailId, attachmentId: ref.attachmentId, index: ref.index, filename: ref.filename });
+      const pickRef = { emailId: ref.emailId, attachmentId: ref.attachmentId, index: ref.index, filename: ref.filename };
+      const owner = opts.resolveEmailOwner ? await opts.resolveEmailOwner(ref.emailId) : null;
+      const r = owner && owner.key !== account.key ? await withAccount(owner, () => fetchAttachment(db, pickRef)) : await fetchAttachment(db, pickRef);
       if (!r.ok) throw new Error(`첨부 ${i + 1}: ${r.error}`);
       total += r.file.content.length;
       if (total > maxTotalBytes()) throw new Error(`첨부가 너무 큽니다(합계 ${Math.round(maxTotalBytes() / 1048576)}MB 초과). 큰 파일은 하이웍스 대용량 첨부로 직접 넣어 주세요.`);

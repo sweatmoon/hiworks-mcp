@@ -20,7 +20,8 @@ import { acct, selfEmail } from '../account.js';
 import { registerTaskTools } from './tools-tasks.js';
 import { sendDraftToSelf } from '../drafts.js';
 import { activeGrantsFor, asDelegate } from '../delegate.js';
-import { currentAccount } from '../account.js';
+import { currentAccount, type Account } from '../account.js';
+import { emailOwnerResolver, enableMailboxes, mailboxesFor } from './mailboxes.js';
 
 const dateShape = {
   since: z.string().describe('시작일 (포함). YYYY-MM-DD (KST) 또는 ISO 8601'),
@@ -53,6 +54,15 @@ function daysAgoKST(days: number): string {
 export function buildMcpServer(): McpServer {
   const server = new McpServer({ name: `${PACKAGE_NAME}-remote`, version: PACKAGE_VERSION });
   const db = getDb();
+  // 한 연결에서 여러 메일함(MAILBOX_LINKS): 도구를 등록하기 전에 감싸 둔다
+  let boxes: Account[] = [];
+  try {
+    boxes = mailboxesFor(currentAccount());
+  } catch {
+    boxes = [];
+  }
+  enableMailboxes(server, db, boxes);
+  const resolveEmailOwner = boxes.length > 1 ? emailOwnerResolver(db, boxes) : undefined;
   registerTaskTools(server, db);
 
   server.registerTool(
@@ -433,7 +443,7 @@ export function buildMcpServer(): McpServer {
     },
     async (params) => {
       try {
-        return jsonResult(await sendDraftToSelf(db, params));
+        return jsonResult(await sendDraftToSelf(db, params, { resolveEmailOwner }));
       } catch (error) {
         return errorResult(error);
       }
