@@ -239,6 +239,18 @@ export function resetLoginLimits(): void {
   globalFailures = [];
 }
 
+/**
+ * 로그인 기록 (2026-11-17 사용자 요청: 누가 연결에 실패하는지 알아 안내할 수 있게).
+ * Railway 로그에 [oauth-login] 한 줄 — 결과·사유·입력한 메일 주소·계정·IP. 비밀번호는 절대 남기지 않는다.
+ * 메일 칸에 비밀번호를 잘못 넣는 경우가 있으므로 메일 형식(@ 포함)이 아니면 주소 대신 "(메일 형식 아님)".
+ */
+function auditLogin(result: 'ok' | 'fail' | 'locked' | 'error', fields: { email: string; ip: string; reason?: string; account?: string }): void {
+  const raw = fields.email.trim().toLowerCase();
+  const email = /^[^\s@]{1,64}@[^\s@]{1,190}$/.test(raw) ? raw.replace(/[^\x21-\x7e]/g, '').slice(0, 120) : '(메일 형식 아님)';
+  const parts = [`result=${result}`, `email=${email}`, ...(fields.account ? [`account=${fields.account}`] : []), ...(fields.reason ? [`reason=${fields.reason}`] : []), `ip=${fields.ip}`];
+  console.error(`[oauth-login] ${parts.join(' ')}`);
+}
+
 export async function handleAuthorize(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const isPost = req.method === 'POST';
   if (!isPost && req.method !== 'GET') return json(res, 405, { error: 'invalid_request' });
@@ -254,13 +266,15 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
 
   const ip = clientIp(req);
   if (lockedOut(ip)) {
-    log(`oauth login locked (ip=${ip})`);
+    auditLogin('locked', { email: String(form['email'] || ''), ip, reason: 'too-many-failures' });
     return loginPage(res, p, v.clientName, '로그인 실패가 많아 잠시 막혔습니다. 15분쯤 뒤 다시 시도하세요.\n그 사이 하이웍스 웹메일 → 환경설정에서 POP3/SMTP 사용이 켜져 있는지 확인하세요.', 429);
   }
   const email = String(form['email'] || '').trim();
   const known: Account | null = accountByEmail(email);
   const password = String(form['password'] || '');
   let acc: Account | null = null;
+  /** 실패 사유·성공 방법 (로그용) */
+  let how = '';
   if (known && !known.selfService) {
     // 관리자가 등록한 계정: 연결 비밀번호, 또는 서버에 이미 있는 그 계정의 하이웍스 메일 비밀번호(2026-11-16 —
     // 로그인 화면이 "@activo.kr 은 메일 비밀번호로"라고 안내하는데 변수 계정은 연결 비밀번호만 받아 주인이 막혔다).
@@ -271,18 +285,22 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
     const mailPw = mailAllowed ? known.password : crypto.randomBytes(24).toString('hex');
     const okConnect = safeEqual(password, expected) && expected === known.loginPassword;
     const okMail = safeEqual(password, mailPw) && mailAllowed && mailPw === known.password && password.length > 0;
-    if (okConnect || okMail) acc = known;
-    else if (mailAllowed && password) {
+    if (okConnect || okMail) {
+      acc = known;
+      how = okConnect ? 'connect-password' : 'mail-password';
+    } else if (!mailAllowed) how = 'wrong-connect-password';
+    else if (!password) how = 'empty-password';
+    else {
       // 저장된 메일 비밀번호와 다르면(비밀번호를 바꿨는데 변수는 예전 값 등) 하이웍스 POP3 에 직접 로그인해 확인한다
       // (2026-11-16 운영: 주인이 맞는 비밀번호를 넣었는데 저장값과 달라 거부됨). 저장값·변수는 바꾸지 않는다
       const check = await verifyMailLogin(known.username.toLowerCase(), password);
       if (check.ok) {
         acc = known;
-        log(`oauth env account mail password verified via pop3 (account=${known.key}; stored password differs)`);
+        how = 'mail-password-pop3';
       } else if (!check.auth) {
-        log(`oauth env account pop3 error (ip=${ip}): ${check.message.slice(0, 120)}`);
+        auditLogin('error', { email, ip, account: known.key, reason: `pop3-unreachable: ${check.message.replace(/\s+/g, ' ').slice(0, 100)}` });
         return loginPage(res, p, v.clientName, '하이웍스 메일 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (웹메일 → 환경설정 → POP3/SMTP 사용이 켜져 있어야 합니다)', 502);
-      }
+      } else how = 'hiworks-rejected';
     }
   } else if (password && selfSignupEnabled() && emailAllowed(email)) {
     // 스스로 등록(또는 이미 등록한 사람이 다시 로그인): 하이웍스 POP3 로 실제 로그인해 확인 → 등록·비밀번호 갱신
@@ -292,17 +310,18 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
     if (check.ok) {
       const r = await upsertRegisteredAccount(getDb(), mailbox, password);
       acc = accountByEmail(mailbox);
-      log(`oauth self-signup ${r.created ? 'registered' : 'refreshed'} (account=${r.key})`);
+      how = r.created ? 'self-signup-new' : 'self-signup';
     } else if (!check.auth) {
-      log(`oauth self-signup pop3 error (ip=${ip}): ${check.message.slice(0, 120)}`);
+      auditLogin('error', { email, ip, reason: `pop3-unreachable: ${check.message.replace(/\s+/g, ' ').slice(0, 100)}` });
       return loginPage(res, p, v.clientName, '하이웍스 메일 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (웹메일 → 환경설정 → POP3/SMTP 사용이 켜져 있어야 합니다)', 502);
-    }
+    } else how = 'hiworks-rejected';
   } else {
     safeEqual(password, crypto.randomBytes(24).toString('hex'));
+    how = !password ? 'empty-password' : !selfSignupEnabled() ? 'unknown-account' : 'domain-not-allowed';
   }
   if (!acc) {
     recordFailure(ip);
-    log(`oauth login failed (ip=${ip})`);
+    auditLogin('fail', { email, ip, reason: how || 'unknown' });
     // 하이웍스 POP3 는 "비밀번호 틀림"과 "POP3 사용 꺼짐"을 구분해 주지 않는다 → 둘 다 안내 (2026-11-17 운영: 팀원이 5번 실패)
     const hint = selfSignupEnabled()
       ? [
@@ -325,7 +344,7 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
     pwFp: passwordFingerprint(acc.loginPassword),
     expiresAt: new Date(Date.now() + CODE_TTL_S * 1000),
   });
-  log(`oauth login ok (account=${acc.key}, client=${p.client_id})`);
+  auditLogin('ok', { email, ip, account: acc.key, reason: how });
   redirectWith(res, p.redirect_uri, { code, state: p.state });
 }
 
