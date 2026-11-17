@@ -195,7 +195,7 @@ button{margin-top:18px;width:100%;padding:11px;border:0;border-radius:8px;backgr
 <h1>hiworks 메일 연결</h1>
 <p>${esc(clientName || 'Claude')} 에서 이 메일함에 접속하려고 합니다. 메일함 주인만 로그인할 수 있습니다.</p>
 ${selfSignupEnabled() ? `<p><b>${esc(selfSignupDomains().map((d) => '@' + d).join(', '))}</b> 메일은 <b>하이웍스 메일 비밀번호</b>로 로그인하세요(처음이면 자동 등록, 본인 메일만 보입니다). 관리자가 따로 알려 준 연결 비밀번호가 있으면 그것을 넣으세요.</p>` : ''}
-${message ? `<p class="err">${esc(message)}</p>` : ''}
+${message ? `<p class="err">${message.split('\n').map(esc).join('<br>')}</p>` : ''}
 <form method="post" action="/oauth/authorize" autocomplete="off">${hidden}
 <label for="email">메일 주소</label><input id="email" name="email" type="email" required autofocus>
 <label for="password">${selfSignupEnabled() ? '비밀번호' : '연결 비밀번호'}</label><input id="password" name="password" type="password" required>
@@ -255,7 +255,7 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
   const ip = clientIp(req);
   if (lockedOut(ip)) {
     log(`oauth login locked (ip=${ip})`);
-    return loginPage(res, p, v.clientName, '로그인 실패가 많아 잠시 막혔습니다. 나중에 다시 시도하세요.', 429);
+    return loginPage(res, p, v.clientName, '로그인 실패가 많아 잠시 막혔습니다. 15분쯤 뒤 다시 시도하세요.\n그 사이 하이웍스 웹메일 → 환경설정에서 POP3/SMTP 사용이 켜져 있는지 확인하세요.', 429);
   }
   const email = String(form['email'] || '').trim();
   const known: Account | null = accountByEmail(email);
@@ -303,7 +303,16 @@ export async function handleAuthorize(req: IncomingMessage, res: ServerResponse,
   if (!acc) {
     recordFailure(ip);
     log(`oauth login failed (ip=${ip})`);
-    const hint = selfSignupEnabled() ? '메일 주소 또는 비밀번호가 맞지 않습니다. 하이웍스 메일 비밀번호를 여러 번 틀리면 하이웍스 계정이 잠길 수 있으니 주의하세요.' : '메일 주소 또는 연결 비밀번호가 맞지 않습니다.';
+    // 하이웍스 POP3 는 "비밀번호 틀림"과 "POP3 사용 꺼짐"을 구분해 주지 않는다 → 둘 다 안내 (2026-11-17 운영: 팀원이 5번 실패)
+    const hint = selfSignupEnabled()
+      ? [
+          '하이웍스가 로그인을 거부했습니다. 아래를 먼저 확인한 뒤 다시 시도하세요.',
+          '① 하이웍스 웹메일 → 환경설정 → POP3/SMTP 사용이 켜져 있어야 합니다(꺼져 있으면 비밀번호가 맞아도 거부됩니다).',
+          '② 외부 메일 프로그램용 비밀번호가 따로 있으면 그 비밀번호를 넣으세요.',
+          '③ 메일 주소는 아이디@회사도메인 전체로 넣으세요.',
+          '여러 번 틀리면 하이웍스 계정이 잠길 수 있으니 주의하세요. 5번 실패하면 15분 동안 이 화면에서도 막힙니다.',
+        ].join('\n')
+      : '메일 주소 또는 연결 비밀번호가 맞지 않습니다.';
     return loginPage(res, p, v.clientName, hint, 401);
   }
   const code = randomToken();

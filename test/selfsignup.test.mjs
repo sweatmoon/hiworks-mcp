@@ -111,7 +111,7 @@ test('로그인 화면: 허용 도메인 안내와 "비밀번호" 칸', async ()
 test('스스로 등록: 틀린 메일 비밀번호는 거부·등록 안 됨, 맞으면 등록·토큰·본인 계정, 비밀번호는 암호화 저장', async () => {
   resetLoginLimits();
   const bad = await login('new@hiworks.com', 'wrong');
-  assert.equal(bad.status, 401); assert.match(bad.html, /하이웍스 계정이 잠길 수 있으니/);
+  assert.equal(bad.status, 401); assert.match(bad.html, /하이웍스 계정이 잠길 수 있으니/); assert.match(bad.html, /POP3\/SMTP 사용이 켜져 있어야/); assert.match(bad.html, /<br>/);
   assert.deepEqual(await rows(), []);
   const ok = await login('New@hiworks.com', 'mail-pw-1');
   assert.equal(ok.status, 302); assert.ok(ok.tokens.access_token);
