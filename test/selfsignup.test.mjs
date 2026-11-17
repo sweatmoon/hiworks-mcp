@@ -200,3 +200,30 @@ test('비활성화(disabled)하면 목록에서 빠지고 토큰도 무효', asy
   await getPool().query("UPDATE registered_accounts SET disabled = false WHERE key = 'new'");
   await refreshRegisteredAccounts(getDb());
 });
+
+test('로그인 기록: 결과·사유·메일 주소는 남기고 비밀번호는 남기지 않음', async () => {
+  resetLoginLimits();
+  const lines = [];
+  const orig = console.error;
+  console.error = (...a) => { const t = a.join(' '); if (t.startsWith('[oauth-login]')) lines.push(t); else orig(...a); };
+  try {
+    await login('New@hiworks.com', 'wrong-pw-xyz');
+    await login('x@other.com', 'pw-other-xyz');
+    await login('secret-typed-in-email-field', 'pw-abc-xyz');
+    await login('staff@hiworks.com', 'bad-connect-xyz');
+    resetLoginLimits();
+    await login('new@hiworks.com', 'mail-pw-1');
+    await login('staff@hiworks.com', 'staff-connect-pass-99');
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(lines.length, 6, lines.join('\n'));
+  assert.match(lines[0], /result=fail email=new@hiworks\.com reason=hiworks-rejected ip=/);
+  assert.match(lines[1], /result=fail email=x@other\.com reason=domain-not-allowed/);
+  assert.match(lines[2], /result=fail email=\(메일 형식 아님\) reason=/);
+  assert.match(lines[3], /result=fail email=staff@hiworks\.com reason=hiworks-rejected/);
+  assert.match(lines[4], /result=ok email=new@hiworks\.com account=new reason=self-signup/);
+  assert.match(lines[5], /result=ok email=staff@hiworks\.com account=staff reason=connect-password/);
+  for (const l of lines) assert.doesNotMatch(l, /wrong-pw|pw-other|pw-abc|bad-connect|mail-pw-1|staff-connect-pass|secret-typed/);
+  resetLoginLimits();
+});
